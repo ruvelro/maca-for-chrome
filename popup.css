@@ -1,0 +1,23 @@
+:root{--bg:#fff;--fg:#111;--muted:#666;--border:#e6e6e6;--chip:#f4f4f5;--btn:#f3f4f6;--btnfg:#111;--accent:#2563eb}
+*{box-sizing:border-box;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif}
+/* Make the footer (Privacidad) always visible: layout as a column with a scrollable main */
+body{margin:0;width:380px;max-width:380px;background:var(--bg);color:var(--fg);display:flex;flex-direction:column;min-height:560px}
+.top{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--border)}
+.brand{font-weight:700;font-size:14px}
+.actions{display:flex;gap:8px}
+.btn{border:1px solid var(--border);background:var(--btn);color:var(--btnfg);padding:6px 10px;border-radius:10px;cursor:pointer;font-size:12px}
+.btn.primary{background:var(--accent);color:#fff;border-color:transparent}
+.search{padding:10px 12px;border-bottom:1px solid var(--border)}
+.search input{width:100%;padding:8px 10px;border-radius:10px;border:1px solid var(--border);font-size:12px}
+main{padding:10px 12px;flex:1;overflow:auto}
+.footer{padding:10px 12px;border-top:1px solid var(--border);text-align:center}
+.footer-link{color:var(--muted);font-size:12px;text-decoration:none}
+.footer-link:hover{color:var(--fg);text-decoration:underline}
+.empty{color:var(--muted);font-size:12px;padding:14px 0;text-align:center}
+.card{border:1px solid var(--border);border-radius:14px;padding:10px;margin-bottom:10px;background:#fff}
+.meta{display:flex;gap:8px;align-items:center;color:var(--muted);font-size:11px;margin-bottom:8px}
+.chip{background:var(--chip);padding:2px 8px;border-radius:999px}
+.k{font-size:11px;color:var(--muted);margin:6px 0 2px}
+.v{font-size:12px;line-height:1.35;white-space:pre-wrap;word-break:break-word}
+.rowbtn{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.toast{position:fixed;left:12px;right:12px;bottom:12px;background:#111;color:#fff;padding:10px 12px;border-radius:12px;font-size:12px;opacity:0.96}

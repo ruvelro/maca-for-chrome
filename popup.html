@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>maca</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand">maca</div>
+    <div class="actions">
+      <button id="openOptions" class="btn" title="Abrir ajustes">Ajustes</button>
+      <button id="clearHistory" class="btn" title="Vaciar historial">Vaciar</button>
+    </div>
+  </header>
+
+  <div class="search">
+    <input id="q" type="search" placeholder="Buscar en el historial..." />
+  </div>
+
+  <main>
+    <div id="empty" class="empty" hidden>No hay elementos en el historial.</div>
+    <div id="list" class="list"></div>
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <footer class="footer">
+    <a id="openPrivacy" href="#" class="footer-link">Privacidad</a>
+  </footer>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
