@@ -26,6 +26,8 @@ const DEFAULT_SYNC_CFG = {
   wpAutoApply: false,
   wpAutoApplyRequireMedia: true,
   wpAutoAnalyzeOnUpload: false,
+  autoAnalyzeOnSelectMedia: false,
+  autoDeselectProcessedOnAutoFill: false,
   onCompleteAction: "none", // none | minimize | close
   // Where to apply the "onCompleteAction" behaviour.
   // - "wp": only in wp-admin (recommended)
@@ -569,6 +571,7 @@ if (chrome?.commands?.onCommand?.addListener) {
 const __lastCandidateByTab = new Map();
 const __autoUploadQueueByTab = new Map();
 const __autoUploadSeenByTab = new Map();
+const __autoUploadStatsByTab = new Map();
 
 function wasRecentlyAutoProcessed(tabId, attachmentId, ttlMs = 5 * 60 * 1000) {
   const byTab = __autoUploadSeenByTab.get(tabId);
@@ -604,6 +607,32 @@ function enqueueAutoUploadJob(tabId, jobFn) {
   const next = prev.catch(() => {}).then(jobFn);
   __autoUploadQueueByTab.set(tabId, next);
   return next;
+}
+
+function getAutoUploadStats(tabId) {
+  let s = __autoUploadStatsByTab.get(tabId);
+  if (!s) {
+    s = { queued: 0, done: 0, ok: 0, error: 0, startedAt: Date.now(), lastAt: Date.now() };
+    __autoUploadStatsByTab.set(tabId, s);
+  }
+  s.lastAt = Date.now();
+  return s;
+}
+
+function resetAutoUploadStatsLater(tabId, delayMs = 12000) {
+  setTimeout(() => {
+    const s = __autoUploadStatsByTab.get(tabId);
+    if (!s) return;
+    // Keep stats if there was recent activity.
+    if ((Date.now() - Number(s.lastAt || 0)) < (delayMs - 500)) return;
+    __autoUploadStatsByTab.delete(tabId);
+  }, delayMs);
+}
+
+async function sendAutoUploadProgress(tabId, payload) {
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: "MACA_AUTO_UPLOAD_PROGRESS", ...(payload || {}) });
+  } catch (_) {}
 }
 
 async function autoApplyAttachmentWithRetry(tabId, payload, { attempts = 10, delayMs = 220 } = {}) {
@@ -673,6 +702,7 @@ if (chrome?.tabs?.onRemoved?.addListener) {
     __lastCandidateByTab.delete(tabId);
     __autoUploadQueueByTab.delete(tabId);
     __autoUploadSeenByTab.delete(tabId);
+    __autoUploadStatsByTab.delete(tabId);
   });
 }
 
@@ -1490,11 +1520,31 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
           sendResponse({ ok: true, skipped: true, reason: "duplicate" });
           return;
         }
+        const st = getAutoUploadStats(tabId);
+        st.queued += 1;
+        await sendAutoUploadProgress(tabId, {
+          phase: "queued",
+          attachmentId,
+          queued: st.queued,
+          done: st.done,
+          ok: st.ok,
+          error: st.error
+        });
+
         markAutoProcessed(tabId, attachmentId);
         markedSeen = true;
 
         await enqueueAutoUploadJob(tabId, async () => {
           await addDebugLog(cfg, "auto_upload_start", { tabId, attachmentId });
+          await sendAutoUploadProgress(tabId, {
+            phase: "processing",
+            attachmentId,
+            queued: st.queued,
+            done: st.done,
+            ok: st.ok,
+            error: st.error
+          });
+
           const out = await analyzeImage({
             imageUrl,
             filenameContext,
@@ -1517,12 +1567,66 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
             throw new Error("No se pudo aplicar el resultado en los campos de Medios.");
           }
 
+          // Optional UX helper for bulk uploads: unselect item once completed.
+          if (cfg.autoDeselectProcessedOnAutoFill) {
+            try {
+              await chrome.tabs.sendMessage(tabId, { type: "MACA_DESELECT_ATTACHMENT", attachmentId });
+            } catch (_) {}
+          }
+
+          st.done += 1;
+          st.ok += 1;
+          st.lastAt = Date.now();
+          await sendAutoUploadProgress(tabId, {
+            phase: "done_item",
+            attachmentId,
+            queued: st.queued,
+            done: st.done,
+            ok: st.ok,
+            error: st.error
+          });
+          if (st.done >= st.queued) {
+            await sendAutoUploadProgress(tabId, {
+              phase: "done_all",
+              attachmentId,
+              queued: st.queued,
+              done: st.done,
+              ok: st.ok,
+              error: st.error
+            });
+            resetAutoUploadStatsLater(tabId, 14000);
+          }
+
           await addDebugLog(cfg, "auto_upload_done", { tabId, attachmentId, attempts: applied.attempts });
         });
 
         sendResponse({ ok: true, attachmentId });
       } catch (err) {
         if (markedSeen) unmarkAutoProcessed(tabId, attachmentId);
+        const st = getAutoUploadStats(tabId);
+        st.done += 1;
+        st.error += 1;
+        st.lastAt = Date.now();
+        await sendAutoUploadProgress(tabId, {
+          phase: "error_item",
+          attachmentId,
+          queued: st.queued,
+          done: st.done,
+          ok: st.ok,
+          error: st.error,
+          errorMessage: err?.message || String(err)
+        });
+        if (st.done >= st.queued) {
+          await sendAutoUploadProgress(tabId, {
+            phase: "done_all",
+            attachmentId,
+            queued: st.queued,
+            done: st.done,
+            ok: st.ok,
+            error: st.error
+          });
+          resetAutoUploadStatsLater(tabId, 16000);
+        }
         const cfg = await getConfigCached().catch(() => ({}));
         await addDebugLog(cfg, "auto_upload_error", { attachmentId, error: err?.message || String(err) });
         sendResponse({ ok: false, error: err?.message || String(err) });

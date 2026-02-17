@@ -7,6 +7,8 @@ const els = {
   wpAutoApply: document.getElementById("wpAutoApply"),
   wpAutoApplyRequireMedia: document.getElementById("wpAutoApplyRequireMedia"),
   wpAutoAnalyzeOnUpload: document.getElementById("wpAutoAnalyzeOnUpload"),
+  autoAnalyzeOnSelectMedia: document.getElementById("autoAnalyzeOnSelectMedia"),
+  autoDeselectProcessedOnAutoFill: document.getElementById("autoDeselectProcessedOnAutoFill"),
   generateMode: document.getElementById("generateMode"),
   altMaxLength: document.getElementById("altMaxLength"),
   avoidImagePrefix: document.getElementById("avoidImagePrefix"),
@@ -318,6 +320,8 @@ function getEffectiveModel(provider) {
     wpAutoApply: false,
     wpAutoApplyRequireMedia: true,
     wpAutoAnalyzeOnUpload: false,
+    autoAnalyzeOnSelectMedia: false,
+    autoDeselectProcessedOnAutoFill: false,
     generateMode: "both",
     altMaxLength: 125,
     avoidImagePrefix: true,
@@ -353,6 +357,8 @@ function getEffectiveModel(provider) {
     if (els.wpAutoApply) els.wpAutoApply.checked = !!cfg.wpAutoApply;
     if (els.wpAutoApplyRequireMedia) els.wpAutoApplyRequireMedia.checked = (cfg.wpAutoApplyRequireMedia !== undefined) ? !!cfg.wpAutoApplyRequireMedia : true;
     if (els.wpAutoAnalyzeOnUpload) els.wpAutoAnalyzeOnUpload.checked = !!cfg.wpAutoAnalyzeOnUpload;
+    if (els.autoAnalyzeOnSelectMedia) els.autoAnalyzeOnSelectMedia.checked = !!cfg.autoAnalyzeOnSelectMedia;
+    if (els.autoDeselectProcessedOnAutoFill) els.autoDeselectProcessedOnAutoFill.checked = !!cfg.autoDeselectProcessedOnAutoFill;
     if (els.shortcutEnabled) els.shortcutEnabled.checked = !!cfg.shortcutEnabled;
     if (els.languageAutoEsEs) els.languageAutoEsEs.checked = !!cfg.languageAutoEsEs;
     if (els.allowDecorativeAltEmpty) els.allowDecorativeAltEmpty.checked = !!cfg.allowDecorativeAltEmpty;
@@ -476,6 +482,8 @@ els.save.addEventListener("click", async () => {
     wpAutoApply: !!els.wpAutoApply?.checked,
     wpAutoApplyRequireMedia: !!els.wpAutoApplyRequireMedia?.checked,
     wpAutoAnalyzeOnUpload: !!els.wpAutoAnalyzeOnUpload?.checked,
+    autoAnalyzeOnSelectMedia: !!els.autoAnalyzeOnSelectMedia?.checked,
+    autoDeselectProcessedOnAutoFill: !!els.autoDeselectProcessedOnAutoFill?.checked,
     shortcutEnabled: !!els.shortcutEnabled?.checked,
     languageAutoEsEs: !!els.languageAutoEsEs?.checked,
     allowDecorativeAltEmpty: !!els.allowDecorativeAltEmpty?.checked,

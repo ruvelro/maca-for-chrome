@@ -134,10 +134,28 @@
     <div class="field" style="margin-top:10px;">
       <label style="display:flex; gap:10px; align-items:center;">
         <input type="checkbox" id="wpAutoAnalyzeOnUpload" style="width:auto; margin:0;" />
-        Auto-generar metadatos al subir imágenes
+        Auto-generar metadatos al subir varias imágenes
       </label>
       <div class="help">
-        Experimental. Cuando detecta una imagen recién subida en la Biblioteca de medios, genera y rellena ALT, title y leyenda automáticamente.
+        Experimental. Se activa cuando detecta una subida múltiple en la Biblioteca de medios y genera/rellena ALT, title y leyenda automáticamente.
+      </div>
+    </div>
+    <div class="field" style="margin-top:10px;">
+      <label style="display:flex; gap:10px; align-items:center;">
+        <input type="checkbox" id="autoAnalyzeOnSelectMedia" style="width:auto; margin:0;" />
+        Auto-generar al seleccionar una imagen en Medios
+      </label>
+      <div class="help">
+        Opcional y desactivado por defecto. Si lo activas, al seleccionar una imagen en la biblioteca se lanzará la generación automática.
+      </div>
+    </div>
+    <div class="field" style="margin-top:10px;">
+      <label style="display:flex; gap:10px; align-items:center;">
+        <input type="checkbox" id="autoDeselectProcessedOnAutoFill" style="width:auto; margin:0;" />
+        Deseleccionar automáticamente las imágenes ya procesadas
+      </label>
+      <div class="help">
+        Opcional para subidas múltiples. Tras rellenar ALT, title y leyenda de una imagen, se desmarca para que veas de un vistazo cuáles faltan.
       </div>
     </div>
 

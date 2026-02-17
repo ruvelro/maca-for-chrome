@@ -10,6 +10,40 @@
     minAgeMs: 1000,
     byId: new Map()
   };
+  const AUTO_UPLOAD_SETTINGS = {
+    autoAnalyzeOnSelectMedia: false
+  };
+  let LAST_USER_SELECT_AT = 0;
+  const AUTO_PROGRESS = {
+    uiVisible: false,
+    hideTimer: null
+  };
+
+  function refreshAutoUploadSettings() {
+    try {
+      chrome.storage.sync.get({
+        autoAnalyzeOnSelectMedia: false
+      }, (cfg) => {
+        AUTO_UPLOAD_SETTINGS.autoAnalyzeOnSelectMedia = !!cfg?.autoAnalyzeOnSelectMedia;
+      });
+    } catch (_) {}
+  }
+
+  function countRecentUploadMarked(windowMs = 120000) {
+    const now = Date.now();
+    let n = 0;
+    for (const meta of AUTO_UPLOAD.byId.values()) {
+      const seenAt = Number(meta?.firstSeenAt || 0);
+      if (!seenAt) continue;
+      const isRecent = (now - seenAt) <= windowMs;
+      if (!isRecent) continue;
+      const looksLikeNewAfterBoot = seenAt > (AUTO_UPLOAD.startedAt + 3000);
+      // Count both explicit "uploading" marks and newly appeared attachments.
+      if (!meta?.sawUploading && !looksLikeNewAfterBoot) continue;
+      if (now - Number(meta.firstSeenAt || 0) <= windowMs) n++;
+    }
+    return n;
+  }
 
   function firstTruthy(...vals) {
     for (const v of vals) {
@@ -222,6 +256,168 @@
       return true;
     }
     return false;
+  }
+
+  function deselectAttachmentById(id) {
+    const scope =
+      document.querySelector(".media-modal") ||
+      document.querySelector(".media-frame") ||
+      document;
+    const el = scope.querySelector(`.attachments .attachment[data-id="${CSS.escape(String(id))}"]`);
+    if (!el) return false;
+    const selected = el.matches("li.attachment[aria-checked='true'], li.attachment[aria-selected='true'], li.attachment.selected");
+    if (!selected) return false;
+    el.click();
+    return true;
+  }
+
+  function ensureAutoProgressUi() {
+    if (!document.body) return null;
+    let style = document.getElementById("maca-auto-progress-style");
+    if (!style) {
+      style = document.createElement("style");
+      style.id = "maca-auto-progress-style";
+      style.textContent = `
+        #maca-auto-progress {
+          position: fixed;
+          right: 14px;
+          bottom: 14px;
+          z-index: 2147483646;
+          background: rgba(17,24,39,.96);
+          color: #fff;
+          border-radius: 10px;
+          padding: 10px 12px;
+          font: 12px/1.3 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+          box-shadow: 0 10px 24px rgba(0,0,0,.28);
+          min-width: 250px;
+        }
+        #maca-auto-progress[hidden] { display: none !important; }
+        #maca-auto-progress .maca-ap-title { font-weight: 700; margin-bottom: 6px; }
+        #maca-auto-progress .maca-ap-row { display: flex; gap: 8px; align-items: center; }
+        #maca-auto-progress .maca-ap-count { margin-left: auto; opacity: .9; }
+        .maca-attachment-status {
+          position: absolute;
+          top: 0;
+          left: 0;
+          min-width: 20px;
+          height: 20px;
+          border-radius: 999px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          font: 11px/1 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+          color: #fff;
+          box-shadow: 0 2px 8px rgba(0,0,0,.22);
+          pointer-events: none;
+          z-index: 7;
+          border: 1px solid rgba(255,255,255,.85);
+        }
+        .maca-attachment-status.compact {
+          min-width: 16px;
+          height: 16px;
+          font-size: 9px;
+          border-width: 1px;
+        }
+        .maca-attachment-status.compact.done { font-size: 8px; }
+        .maca-attachment-status.pending { background: #2563eb; }
+        .maca-attachment-status.processing { background: #0369a1; }
+        .maca-attachment-status.done { background: #16a34a; }
+        .maca-attachment-status.error { background: #dc2626; }
+      `;
+      document.documentElement.appendChild(style);
+    }
+
+    let panel = document.getElementById("maca-auto-progress");
+    if (!panel) {
+      panel = document.createElement("div");
+      panel.id = "maca-auto-progress";
+      panel.hidden = true;
+      panel.innerHTML = `
+        <div class="maca-ap-title">maca - Auto-generacion</div>
+        <div class="maca-ap-row">
+          <span id="maca-ap-status">En cola...</span>
+          <span id="maca-ap-count" class="maca-ap-count">0/0</span>
+        </div>
+      `;
+      document.body.appendChild(panel);
+    }
+    return panel;
+  }
+
+  function setAttachmentStatusBadge(attachmentId, state) {
+    const id = String(attachmentId || "");
+    if (!id) return;
+    const scope =
+      document.querySelector(".media-modal") ||
+      document.querySelector(".media-frame") ||
+      document;
+    const el = scope.querySelector(`.attachments .attachment[data-id="${CSS.escape(id)}"]`);
+    if (!el) return;
+    let badge = el.querySelector(".maca-attachment-status");
+    if (!badge) {
+      badge = document.createElement("span");
+      badge.className = "maca-attachment-status";
+      el.appendChild(badge);
+    }
+    badge.className = `maca-attachment-status ${state}`;
+    if (state === "pending") badge.textContent = "...";
+    else if (state === "processing") badge.textContent = "*";
+    else if (state === "done") badge.textContent = "OK";
+    else badge.textContent = "ERR";
+
+    try {
+      const rect = el.getBoundingClientRect();
+      const compact = rect.width > 0 && rect.width < 170;
+      badge.classList.toggle("compact", compact);
+      const hostStyle = getComputedStyle(el);
+      if (hostStyle.position === "static") el.style.position = "relative";
+      const delta = compact ? 4 : 6;
+      badge.style.top = `${delta}px`;
+      badge.style.left = `${delta}px`;
+      badge.style.right = "auto";
+    } catch (_) {
+      // Fallback to top-left.
+      badge.classList.remove("compact");
+      badge.style.top = "6px";
+      badge.style.left = "6px";
+      badge.style.right = "auto";
+    }
+  }
+
+  function updateAutoProgressUi(msg) {
+    const panel = ensureAutoProgressUi();
+    if (!panel) {
+      setTimeout(() => updateAutoProgressUi(msg), 120);
+      return;
+    }
+    const statusEl = panel.querySelector("#maca-ap-status");
+    const countEl = panel.querySelector("#maca-ap-count");
+    const queued = Number(msg?.queued || 0);
+    const done = Number(msg?.done || 0);
+    const ok = Number(msg?.ok || 0);
+    const err = Number(msg?.error || 0);
+    const phase = String(msg?.phase || "");
+
+    if (countEl) countEl.textContent = `${Math.min(done, queued)}/${queued}`;
+    if (statusEl) {
+      if (phase === "done_all") statusEl.textContent = `Completado: ${ok} OK, ${err} error`;
+      else if (phase === "error_item") statusEl.textContent = `Procesando... (${ok} OK, ${err} error)`;
+      else if (phase === "processing") statusEl.textContent = "Analizando y rellenando...";
+      else statusEl.textContent = "En cola...";
+    }
+    panel.hidden = false;
+    AUTO_PROGRESS.uiVisible = true;
+
+    if (AUTO_PROGRESS.hideTimer) {
+      clearTimeout(AUTO_PROGRESS.hideTimer);
+      AUTO_PROGRESS.hideTimer = null;
+    }
+    if (phase === "done_all") {
+      AUTO_PROGRESS.hideTimer = setTimeout(() => {
+        panel.hidden = true;
+        AUTO_PROGRESS.uiVisible = false;
+      }, 6000);
+    }
   }
 
   function isVisibleField(el) {
@@ -465,9 +661,18 @@
       if (!entry) return;
       const { id, meta } = entry;
       if (meta.triggered) return;
+
       const selected = isSelectedAttachmentEl(el);
-      const looksLikeNewAfterBoot = meta.firstSeenAt > (AUTO_UPLOAD.startedAt + 3000);
-      if (!meta.sawUploading && (!looksLikeNewAfterBoot || !selected)) return;
+      const fromUpload = !!meta.sawUploading;
+      const looksLikeNewAfterBoot = Number(meta.firstSeenAt || 0) > (AUTO_UPLOAD.startedAt + 3000);
+      const isMultiUpload = countRecentUploadMarked() >= 2;
+      const allowBatchUploadFlow = isMultiUpload && (fromUpload || looksLikeNewAfterBoot);
+      const userJustSelected = (Date.now() - LAST_USER_SELECT_AT) < 3000;
+      const allowSelectFeature = AUTO_UPLOAD_SETTINGS.autoAnalyzeOnSelectMedia && selected && userJustSelected;
+
+      // Default behavior: only auto-run for multi-upload sessions.
+      // Optional feature: auto-run on manual selection in media library.
+      if (!(allowBatchUploadFlow || allowSelectFeature)) return;
       if ((Date.now() - meta.firstSeenAt) < AUTO_UPLOAD.minAgeMs) return;
 
       let c = extractCandidateFromAttachmentEl(el) || findCandidate(el);
@@ -517,8 +722,24 @@
   function initAutoUploadObserver() {
     try {
       if (window.__macaAutoUploadObserver) return;
+      refreshAutoUploadSettings();
+      try {
+        chrome.storage.onChanged.addListener((changes, area) => {
+          if (area !== "sync") return;
+          if (!changes || !changes.autoAnalyzeOnSelectMedia) return;
+          AUTO_UPLOAD_SETTINGS.autoAnalyzeOnSelectMedia = !!changes.autoAnalyzeOnSelectMedia.newValue;
+        });
+      } catch (_) {}
+
       const root = document.querySelector(".attachments-browser") || document.body;
       if (!root) return;
+
+      const scanAll = () => {
+        try {
+          const all = root.querySelectorAll("li.attachment[data-id]");
+          for (const el of all) maybeAutoProcessUploadedAttachment(el);
+        } catch (_) {}
+      };
 
       const scanSelected = () => {
         try {
@@ -529,7 +750,7 @@
 
       const existing = root.querySelectorAll("li.attachment[data-id]");
       for (const el of existing) noteAttachmentMeta(el);
-      scanSelected();
+      scanAll();
 
       const obs = new MutationObserver((mutations) => {
         for (const m of mutations) {
@@ -566,8 +787,14 @@
       window.__macaAutoUploadObserver = obs;
 
       // Fallback hooks: selection changes in WP don't always mutate useful attrs.
-      root.addEventListener("click", () => setTimeout(scanSelected, 50), true);
-      root.addEventListener("keyup", () => setTimeout(scanSelected, 50), true);
+      root.addEventListener("click", () => {
+        LAST_USER_SELECT_AT = Date.now();
+        setTimeout(scanSelected, 50);
+      }, true);
+      root.addEventListener("keyup", () => {
+        LAST_USER_SELECT_AT = Date.now();
+        setTimeout(scanSelected, 50);
+      }, true);
 
       // Short-lived poll to catch delayed updates after upload.
       const pollStart = Date.now();
@@ -576,7 +803,7 @@
           clearInterval(poll);
           return;
         }
-        scanSelected();
+        scanAll();
       }, 1200);
     } catch (_) {}
   }
@@ -665,6 +892,24 @@
     if (msg.type === "MACA_GET_SELECTED_ATTACHMENTS") {
       const items = findSelectedWpAttachments();
       sendResponse({ ok: true, items });
+      return true;
+    }
+    if (msg.type === "MACA_DESELECT_ATTACHMENT") {
+      const ok = deselectAttachmentById(String(msg.attachmentId || ""));
+      sendResponse({ ok });
+      return true;
+    }
+    if (msg.type === "MACA_AUTO_UPLOAD_PROGRESS") {
+      const attachmentId = String(msg.attachmentId || "");
+      const phase = String(msg.phase || "");
+      if (attachmentId) {
+        if (phase === "queued") setAttachmentStatusBadge(attachmentId, "pending");
+        else if (phase === "processing") setAttachmentStatusBadge(attachmentId, "processing");
+        else if (phase === "done_item") setAttachmentStatusBadge(attachmentId, "done");
+        else if (phase === "error_item") setAttachmentStatusBadge(attachmentId, "error");
+      }
+      updateAutoProgressUi(msg);
+      sendResponse({ ok: true });
       return true;
     }
     if (msg.type === "MACA_APPLY_TO_ATTACHMENT") {
