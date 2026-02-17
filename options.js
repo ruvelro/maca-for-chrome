@@ -32,6 +32,7 @@ const els = {
   captionTemplateEnabled: document.getElementById("captionTemplateEnabled"),
   captionTemplate: document.getElementById("captionTemplate"),
   captionSignatureText: document.getElementById("captionSignatureText"),
+  autoCaptionSignatureOnAutoFill: document.getElementById("autoCaptionSignatureOnAutoFill"),
   debugEnabled: document.getElementById("debugEnabled"),
   copyDebug: document.getElementById("copyDebug"),
   clearDebug: document.getElementById("clearDebug"),
@@ -334,6 +335,7 @@ function getEffectiveModel(provider) {
     captionTemplateEnabled: false,
     captionTemplate: "{{caption}}",
     captionSignatureText: "",
+    autoCaptionSignatureOnAutoFill: false,
     debugEnabled: false,
     syncApiKey: false,
     apiKey: ""
@@ -357,6 +359,7 @@ function getEffectiveModel(provider) {
     if (els.captionTemplateEnabled) els.captionTemplateEnabled.checked = !!cfg.captionTemplateEnabled;
     if (els.captionTemplate) els.captionTemplate.value = String(cfg.captionTemplate || "{{caption}}");
     if (els.captionSignatureText) els.captionSignatureText.value = String(cfg.captionSignatureText || "");
+    if (els.autoCaptionSignatureOnAutoFill) els.autoCaptionSignatureOnAutoFill.checked = !!cfg.autoCaptionSignatureOnAutoFill;
     if (els.debugEnabled) els.debugEnabled.checked = !!cfg.debugEnabled;
     if (els.syncApiKey) els.syncApiKey.checked = !!cfg.syncApiKey;
 
@@ -479,6 +482,7 @@ els.save.addEventListener("click", async () => {
     captionTemplateEnabled: !!els.captionTemplateEnabled?.checked,
     captionTemplate: (els.captionTemplate?.value || "{{caption}}").trim() || "{{caption}}",
     captionSignatureText: (els.captionSignatureText?.value || "").trim(),
+    autoCaptionSignatureOnAutoFill: !!els.autoCaptionSignatureOnAutoFill?.checked,
     debugEnabled: !!els.debugEnabled?.checked,
     syncApiKey,
     generateMode: String(els.generateMode?.value || "both"),

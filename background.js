@@ -43,6 +43,7 @@ const DEFAULT_SYNC_CFG = {
   captionTemplateEnabled: false,
   captionTemplate: "{{caption}}",
   captionSignatureText: "",
+  autoCaptionSignatureOnAutoFill: false,
   // Debug
   debugEnabled: false,
   shortcutEnabled: false,
@@ -534,6 +535,7 @@ if (chrome?.commands?.onCommand?.addListener) {
         generateMode: String(cfg.generateMode || "both"),
         wpAutoApply: !!cfg.wpAutoApply,
         wpAutoApplyRequireMedia: !!cfg.wpAutoApplyRequireMedia,
+        autoCaptionSignatureOnAutoFill: !!cfg.autoCaptionSignatureOnAutoFill,
         onCompleteAction: resolveOnCompleteAction(cfg, pageUrl)
       });
 
@@ -541,7 +543,8 @@ if (chrome?.commands?.onCommand?.addListener) {
         const { alt, title, leyenda, decorativa } = await analyzeImage({
           imageUrl: imgUrl,
           filenameContext,
-          pageUrl
+          pageUrl,
+          withCaptionSignature: !!cfg.wpAutoApply && !!cfg.autoCaptionSignatureOnAutoFill
         });
 
         await sendOverlay(tabId, {
@@ -777,6 +780,7 @@ if (chrome?.contextMenus?.onClicked?.addListener) chrome.contextMenus.onClicked.
         generateMode: String(cfg.generateMode || "both"),
         wpAutoApply: !!cfg.wpAutoApply,
         wpAutoApplyRequireMedia: !!cfg.wpAutoApplyRequireMedia,
+        autoCaptionSignatureOnAutoFill: !!cfg.autoCaptionSignatureOnAutoFill,
         onCompleteAction: resolveOnCompleteAction(cfg, pageUrl)
       });
 
@@ -786,7 +790,7 @@ if (chrome?.contextMenus?.onClicked?.addListener) chrome.contextMenus.onClicked.
           imageUrl: imgUrl,
           filenameContext,
           pageUrl,
-          withCaptionSignature: useCaptionSignature
+          withCaptionSignature: useCaptionSignature || (!!cfg.wpAutoApply && !!cfg.autoCaptionSignatureOnAutoFill)
         });
 
         await sendOverlay(tabId, {
@@ -1400,6 +1404,7 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
   if (msg.type === "MACA_ANALYZE_IMAGE") {
     (async () => {
       try {
+        const cfg = await getConfigCached();
         const imageUrl = msg.imageUrl;
         const filenameContext = msg.filenameContext || "";
         const pageUrl = sender.tab?.url || "";
@@ -1407,7 +1412,8 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
         const { alt, title, leyenda, decorativa } = await analyzeImage({
           imageUrl,
           filenameContext,
-          pageUrl
+          pageUrl,
+          withCaptionSignature: !!cfg.wpAutoApply && !!cfg.autoCaptionSignatureOnAutoFill
         });
 
         sendResponse({ alt, title, leyenda, decorativa });
@@ -1423,10 +1429,16 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
   if (msg.type === "MACA_REGENERATE") {
     (async () => {
       try {
+        const cfg = await getConfigCached();
         const imageUrl = msg.imageUrl;
         const filenameContext = msg.filenameContext || "";
         const pageUrl = msg.pageUrl || sender.tab?.url || "";
-        const { alt, title, leyenda, decorativa } = await analyzeImage({ imageUrl, filenameContext, pageUrl });
+        const { alt, title, leyenda, decorativa } = await analyzeImage({
+          imageUrl,
+          filenameContext,
+          pageUrl,
+          withCaptionSignature: !!cfg.wpAutoApply && !!cfg.autoCaptionSignatureOnAutoFill
+        });
         sendResponse({ alt, title, leyenda, decorativa });
       } catch (err) {
         sendResponse({ error: err?.message || String(err) });
@@ -1487,7 +1499,8 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
             imageUrl,
             filenameContext,
             pageUrl,
-            modeOverride: "both"
+            modeOverride: "both",
+            withCaptionSignature: !!cfg.autoCaptionSignatureOnAutoFill
           });
 
           const applyPayload = {
@@ -1555,7 +1568,12 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
 
           let out;
           try {
-            out = await analyzeImage({ imageUrl, filenameContext, pageUrl: sender.tab?.url || "" });
+            out = await analyzeImage({
+              imageUrl,
+              filenameContext,
+              pageUrl: sender.tab?.url || "",
+              withCaptionSignature: !!cfg.autoCaptionSignatureOnAutoFill
+            });
             results.push({ attachmentId, ...out, imageUrl });
 
             // In batch mode, always try to apply results into WP fields.
