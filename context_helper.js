@@ -1,10 +1,15 @@
-// context_helper.js — captures the last right-click target and extracts an image URL.
+// context_helper.js - captures the last right-click target and extracts an image URL.
 // Also supports fetching the currently selected/open media item in WordPress Media Library.
 // Loaded only on wp-admin pages via content_scripts.
 
 (() => {
   const STATE = { last: null, lastAt: 0 };
   const MAX_AGE_MS = 120000; // 2 minutes
+  const AUTO_UPLOAD = {
+    startedAt: Date.now(),
+    minAgeMs: 1000,
+    byId: new Map()
+  };
 
   function firstTruthy(...vals) {
     for (const v of vals) {
@@ -219,12 +224,49 @@
     return false;
   }
 
+  function isVisibleField(el) {
+    if (!el) return false;
+    try {
+      const st = getComputedStyle(el);
+      if (!st) return false;
+      if (st.display === "none" || st.visibility === "hidden" || st.opacity === "0") return false;
+      const modal = el.closest?.(".media-modal");
+      if (modal && modal.getAttribute?.("aria-hidden") === "true") return false;
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function pickFieldFromSelectors(scope, details, selectors) {
+    const roots = [details, scope, document].filter(Boolean);
+    for (const root of roots) {
+      for (const sel of selectors) {
+        try {
+          const all = Array.from(root.querySelectorAll(sel));
+          const visible = all.find(isVisibleField);
+          if (visible) return visible;
+          if (all[0]) return all[0];
+        } catch (_) {}
+      }
+    }
+    return null;
+  }
+
   function getAltFieldForAttachment(id) {
     const scope = document.querySelector(".media-modal") || document.querySelector(".media-frame") || document;
     const details =
       scope.querySelector(".attachment-details") ||
       document.querySelector(".attachment-details");
     const selectors = [
+      '.attachment-details .setting[data-setting="alt"] textarea',
+      '.attachment-details .setting[data-setting="alt"] input',
+      '.attachment-details [data-setting="alt"] textarea',
+      '.attachment-details [data-setting="alt"] input',
+      '.media-modal .attachment-details .setting[data-setting="alt"] textarea',
+      '.media-modal .attachment-details .setting[data-setting="alt"] input',
+      '.media-modal [data-setting="alt"] textarea',
+      '.media-modal [data-setting="alt"] input',
       "#attachment_alt",
       "textarea.attachment-alt-text",
       "input.attachment-alt-text",
@@ -235,13 +277,7 @@
       'textarea[aria-label="Alt text"]',
       'input[aria-label="Alt text"]'
     ];
-    for (const sel of selectors) {
-      try {
-        const el = (details || scope).querySelector(sel);
-        if (el) return el;
-      } catch (_) {}
-    }
-    return null;
+    return pickFieldFromSelectors(scope, details, selectors);
   }
 
   function getCaptionFieldForAttachment(id) {
@@ -250,6 +286,14 @@
       scope.querySelector(".attachment-details") ||
       document.querySelector(".attachment-details");
     const selectors = [
+      '.attachment-details .setting[data-setting="caption"] textarea',
+      '.attachment-details .setting[data-setting="caption"] input',
+      '.attachment-details [data-setting="caption"] textarea',
+      '.attachment-details [data-setting="caption"] input',
+      '.media-modal .attachment-details .setting[data-setting="caption"] textarea',
+      '.media-modal .attachment-details .setting[data-setting="caption"] input',
+      '.media-modal [data-setting="caption"] textarea',
+      '.media-modal [data-setting="caption"] input',
       "#attachment_caption",
       "textarea.attachment-caption",
       "input.attachment-caption",
@@ -260,13 +304,7 @@
       'textarea[aria-label="Caption"]',
       'input[aria-label="Caption"]'
     ];
-    for (const sel of selectors) {
-      try {
-        const el = (details || scope).querySelector(sel);
-        if (el) return el;
-      } catch (_) {}
-    }
-    return null;
+    return pickFieldFromSelectors(scope, details, selectors);
   }
 
   function getTitleFieldForAttachment(id) {
@@ -278,6 +316,10 @@
       "#attachment_title",
       "input.attachment-title",
       "textarea.attachment-title",
+      '.attachment-details .setting[data-setting="title"] input',
+      '.attachment-details .setting[data-setting="title"] textarea',
+      '.attachment-details [data-setting="title"] input',
+      '.attachment-details [data-setting="title"] textarea',
       `.setting[data-setting="title"] input`,
       `.setting[data-setting="title"] textarea`,
       `input[name="attachments[${id}][title]"]`,
@@ -287,13 +329,7 @@
       'input[aria-label="Title"]',
       'textarea[aria-label="Title"]'
     ];
-    for (const sel of selectors) {
-      try {
-        const el = (details || scope).querySelector(sel);
-        if (el) return el;
-      } catch (_) {}
-    }
-    return null;
+    return pickFieldFromSelectors(scope, details, selectors);
   }
 
   async function applyToAttachment({ attachmentId, alt, title, leyenda, generateMode, requireMedia }) {
@@ -310,7 +346,7 @@
 
     // Wait briefly for the details panel to update
     const start = Date.now();
-    while (Date.now() - start < 2000) {
+    while (Date.now() - start < 3500) {
       const altEl = getAltFieldForAttachment(id);
       const titleEl = getTitleFieldForAttachment(id);
       const capEl = getCaptionFieldForAttachment(id);
@@ -400,8 +436,155 @@
       if (c && c.imageUrl) return c;
     }
 
-    // 3) No selection found — do NOT pick a random visible image
+    // 3) No selection found - do NOT pick a random visible image
     return null;
+  }
+
+  function isSelectedAttachmentEl(el) {
+    if (!el) return false;
+    return el.matches("li.attachment[aria-checked='true'], li.attachment[aria-selected='true'], li.attachment.selected");
+  }
+
+  function noteAttachmentMeta(el) {
+    if (!el) return null;
+    const id = String(el.getAttribute("data-id") || el.dataset?.id || "");
+    if (!id) return null;
+    const cls = String(el.className || "");
+    let meta = AUTO_UPLOAD.byId.get(id);
+    if (!meta) {
+      meta = { firstSeenAt: Date.now(), sawUploading: false, triggered: false, retries: 0 };
+      AUTO_UPLOAD.byId.set(id, meta);
+    }
+    if (/\bupload/i.test(cls)) meta.sawUploading = true;
+    return { id, meta };
+  }
+
+  function maybeAutoProcessUploadedAttachment(el) {
+    try {
+      const entry = noteAttachmentMeta(el);
+      if (!entry) return;
+      const { id, meta } = entry;
+      if (meta.triggered) return;
+      const selected = isSelectedAttachmentEl(el);
+      const looksLikeNewAfterBoot = meta.firstSeenAt > (AUTO_UPLOAD.startedAt + 3000);
+      if (!meta.sawUploading && (!looksLikeNewAfterBoot || !selected)) return;
+      if ((Date.now() - meta.firstSeenAt) < AUTO_UPLOAD.minAgeMs) return;
+
+      let c = extractCandidateFromAttachmentEl(el) || findCandidate(el);
+      if (c?.imageUrl && String(c.imageUrl).startsWith("blob:")) {
+        const selectedCand = findSelectedWpCandidate();
+        if (selectedCand?.imageUrl && !String(selectedCand.imageUrl).startsWith("blob:")) {
+          c = {
+            imageUrl: selectedCand.imageUrl,
+            filenameContext: firstTruthy(c.filenameContext, selectedCand.filenameContext)
+          };
+        }
+      }
+      if (!c?.imageUrl) return;
+
+      meta.triggered = true;
+      try {
+        chrome.runtime.sendMessage({
+          type: "MACA_AUTO_PROCESS_ATTACHMENT",
+          attachmentId: id,
+          imageUrl: c.imageUrl,
+          filenameContext: c.filenameContext || "",
+          pageUrl: location.href
+        }, (res) => {
+          const hadRuntimeError = !!chrome.runtime.lastError;
+          const skipped = !!res?.skipped;
+          if (skipped) {
+            meta.retries = 0;
+            if (String(res?.reason || "") !== "duplicate") meta.triggered = false;
+            return;
+          }
+          if (hadRuntimeError || !res?.ok) {
+            meta.triggered = false;
+            meta.retries = Number(meta.retries || 0) + 1;
+            if (meta.retries <= 3) {
+              setTimeout(() => {
+                try { maybeAutoProcessUploadedAttachment(el); } catch (_) {}
+              }, 900);
+            }
+          } else {
+            meta.retries = 0;
+          }
+        });
+      } catch (_) {}
+    } catch (_) {}
+  }
+
+  function initAutoUploadObserver() {
+    try {
+      if (window.__macaAutoUploadObserver) return;
+      const root = document.querySelector(".attachments-browser") || document.body;
+      if (!root) return;
+
+      const scanSelected = () => {
+        try {
+          const selected = getWpSelectedAttachmentEls();
+          for (const el of selected) maybeAutoProcessUploadedAttachment(el);
+        } catch (_) {}
+      };
+
+      const existing = root.querySelectorAll("li.attachment[data-id]");
+      for (const el of existing) noteAttachmentMeta(el);
+      scanSelected();
+
+      const obs = new MutationObserver((mutations) => {
+        for (const m of mutations) {
+          if (m.type === "childList") {
+            for (const n of m.addedNodes) {
+              if (!n || n.nodeType !== 1) continue;
+              const el = n.matches?.("li.attachment[data-id]") ? n : n.querySelector?.("li.attachment[data-id]");
+              if (el) {
+                noteAttachmentMeta(el);
+                maybeAutoProcessUploadedAttachment(el);
+              }
+              const all = n.querySelectorAll ? n.querySelectorAll("li.attachment[data-id]") : [];
+              for (const li of all) {
+                noteAttachmentMeta(li);
+                maybeAutoProcessUploadedAttachment(li);
+              }
+            }
+          } else if (m.type === "attributes") {
+            const el = m.target?.closest?.("li.attachment[data-id]") || m.target;
+            if (el && el.matches?.("li.attachment[data-id]")) {
+              noteAttachmentMeta(el);
+              maybeAutoProcessUploadedAttachment(el);
+            }
+          }
+        }
+      });
+
+      obs.observe(root, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["class", "aria-checked", "aria-selected", "data-id"]
+      });
+      window.__macaAutoUploadObserver = obs;
+
+      // Fallback hooks: selection changes in WP don't always mutate useful attrs.
+      root.addEventListener("click", () => setTimeout(scanSelected, 50), true);
+      root.addEventListener("keyup", () => setTimeout(scanSelected, 50), true);
+
+      // Short-lived poll to catch delayed updates after upload.
+      const pollStart = Date.now();
+      const poll = setInterval(() => {
+        if (Date.now() - pollStart > 45000) {
+          clearInterval(poll);
+          return;
+        }
+        scanSelected();
+      }, 1200);
+    } catch (_) {}
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => setTimeout(initAutoUploadObserver, 0), { once: true });
+  } else {
+    setTimeout(initAutoUploadObserver, 0);
   }
 
   // Capture last right-click target within wp-admin (helps context menu workflow)
@@ -477,8 +660,16 @@
     }
     if (msg.type === "MACA_APPLY_TO_ATTACHMENT") {
       (async () => {
-  // Safety: avoid running inside iframes
-  try { if (window.top !== window) return; } catch (_) { return; }
+        // Safety: avoid running inside iframes.
+        try {
+          if (window.top !== window) {
+            sendResponse({ ok: false, skipped: true, reason: "iframe" });
+            return;
+          }
+        } catch (_) {
+          sendResponse({ ok: false, skipped: true, reason: "iframe" });
+          return;
+        }
         const res = await applyToAttachment({
           attachmentId: msg.attachmentId,
           alt: msg.alt,
@@ -493,3 +684,4 @@
     }
   });
 })();
+

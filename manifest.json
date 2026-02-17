@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "maca for Chrome",
   "short_name": "maca",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "maca (Media ALT & Caption AI) - Generate ALT, title and caption for WordPress media with AI (OpenAI/Gemini/OpenRouter).",
   "permissions": [
     "clipboardWrite",

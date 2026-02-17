@@ -25,6 +25,7 @@ const DEFAULT_SYNC_CFG = {
   seoProfile: "blog",
   wpAutoApply: false,
   wpAutoApplyRequireMedia: true,
+  wpAutoAnalyzeOnUpload: false,
   onCompleteAction: "none", // none | minimize | close
   // Where to apply the "onCompleteAction" behaviour.
   // - "wp": only in wp-admin (recommended)
@@ -537,6 +538,53 @@ if (chrome?.commands?.onCommand?.addListener) {
 
 // Cache of last right-click candidate per tab, pushed by the content script.
 const __lastCandidateByTab = new Map();
+const __autoUploadQueueByTab = new Map();
+const __autoUploadSeenByTab = new Map();
+
+function wasRecentlyAutoProcessed(tabId, attachmentId, ttlMs = 5 * 60 * 1000) {
+  const byTab = __autoUploadSeenByTab.get(tabId);
+  if (!byTab) return false;
+  const now = Date.now();
+  for (const [id, ts] of byTab.entries()) {
+    if (now - Number(ts || 0) > ttlMs) byTab.delete(id);
+  }
+  if (!attachmentId) return false;
+  const ts = byTab.get(String(attachmentId));
+  return !!ts && (now - Number(ts || 0) <= ttlMs);
+}
+
+function markAutoProcessed(tabId, attachmentId) {
+  if (tabId == null || !attachmentId) return;
+  let byTab = __autoUploadSeenByTab.get(tabId);
+  if (!byTab) {
+    byTab = new Map();
+    __autoUploadSeenByTab.set(tabId, byTab);
+  }
+  byTab.set(String(attachmentId), Date.now());
+}
+
+function enqueueAutoUploadJob(tabId, jobFn) {
+  const prev = __autoUploadQueueByTab.get(tabId) || Promise.resolve();
+  const next = prev.catch(() => {}).then(jobFn);
+  __autoUploadQueueByTab.set(tabId, next);
+  return next;
+}
+
+async function autoApplyAttachmentWithRetry(tabId, payload, { attempts = 10, delayMs = 220 } = {}) {
+  let lastRes = null;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      lastRes = await chrome.tabs.sendMessage(tabId, payload);
+      const applied = lastRes?.applied || {};
+      const ok = !!(applied.alt || applied.title || applied.leyenda);
+      if (ok) return { ok: true, attempts: i + 1, response: lastRes };
+    } catch (err) {
+      lastRes = { ok: false, error: err?.message || String(err) };
+    }
+    if (i < attempts - 1) await new Promise((r) => setTimeout(r, delayMs));
+  }
+  return { ok: false, attempts, response: lastRes };
+}
 
 if (chrome?.runtime?.onMessage?.addListener) {
   chrome.runtime.onMessage.addListener((msg, sender) => {
@@ -581,6 +629,14 @@ if (chrome?.runtime?.onInstalled?.addListener) {
   chrome.runtime.onInstalled.addListener(() => {
     __menuEnsured = false;
     ensureMenu();
+  });
+}
+
+if (chrome?.tabs?.onRemoved?.addListener) {
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    __lastCandidateByTab.delete(tabId);
+    __autoUploadQueueByTab.delete(tabId);
+    __autoUploadSeenByTab.delete(tabId);
   });
 }
 
@@ -723,7 +779,7 @@ if (chrome?.contextMenus?.onClicked?.addListener) chrome.contextMenus.onClicked.
 // Shared analysis pipeline (WP button + context menu)
 // =========================
 
-async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSignature = false }) {
+async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSignature = false, modeOverride = "" }) {
   if (!isWpAdminUrl(pageUrl || "")) {
     throw new Error("maca está limitada a WordPress (wp-admin).");
   }
@@ -732,7 +788,7 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSig
   }
 
   const cfg = await getConfigCached();
-  await addDebugLog(cfg, "analyze_start", { provider: cfg.provider, model: cfg.model, mode: String(cfg.generateMode||"both"), pageHost: safeHost(pageUrl), imageUrl });
+  await addDebugLog(cfg, "analyze_start", { provider: cfg.provider, model: cfg.model, mode: String(modeOverride || cfg.generateMode || "both"), pageHost: safeHost(pageUrl), imageUrl });
 
   const isLocal = cfg.provider === "local_ollama" || cfg.provider === "local_openai";
   if (!isLocal && !cfg.apiKey) {
@@ -745,7 +801,7 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSig
     ? `\nContexto adicional (nombre de archivo, no fiable): "${filenameContext}"\n`
     : "";
 
-  const mode = String(cfg.generateMode || "both"); // both | alt | caption
+  const mode = String(modeOverride || cfg.generateMode || "both"); // both | alt | caption
   const altMaxLength = Number.isFinite(Number(cfg.altMaxLength)) ? Number(cfg.altMaxLength) : 125;
   const avoidImagePrefix = (cfg.avoidImagePrefix !== undefined) ? !!cfg.avoidImagePrefix : true;
 
@@ -1250,6 +1306,70 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
     return true;
   }
 
+  // 2b) Auto-process a just-uploaded attachment in WP (experimental)
+  if (msg.type === "MACA_AUTO_PROCESS_ATTACHMENT") {
+    (async () => {
+      const tabId = sender?.tab?.id;
+      const pageUrl = sender?.tab?.url || msg?.pageUrl || "";
+      const attachmentId = String(msg?.attachmentId || "");
+      const imageUrl = String(msg?.imageUrl || "");
+      const filenameContext = String(msg?.filenameContext || "");
+      try {
+        if (tabId == null) throw new Error("No hay pestaña activa.");
+        if (!attachmentId || !imageUrl) throw new Error("Faltan datos del adjunto recién subido.");
+        if (!isWpAdminUrl(pageUrl)) {
+          sendResponse({ ok: false, skipped: true, reason: "non_wp" });
+          return;
+        }
+
+        const cfg = await getConfigCached();
+        if (!cfg?.wpAutoAnalyzeOnUpload) {
+          sendResponse({ ok: false, skipped: true, reason: "disabled" });
+          return;
+        }
+
+        if (wasRecentlyAutoProcessed(tabId, attachmentId)) {
+          sendResponse({ ok: true, skipped: true, reason: "duplicate" });
+          return;
+        }
+        markAutoProcessed(tabId, attachmentId);
+
+        await enqueueAutoUploadJob(tabId, async () => {
+          await addDebugLog(cfg, "auto_upload_start", { tabId, attachmentId });
+          const out = await analyzeImage({
+            imageUrl,
+            filenameContext,
+            pageUrl,
+            modeOverride: "both"
+          });
+
+          const applyPayload = {
+            type: "MACA_APPLY_TO_ATTACHMENT",
+            attachmentId,
+            alt: out.alt || "",
+            title: out.title || "",
+            leyenda: out.leyenda || "",
+            generateMode: "both",
+            requireMedia: true
+          };
+          const applied = await autoApplyAttachmentWithRetry(tabId, applyPayload, { attempts: 12, delayMs: 220 });
+          if (!applied.ok) {
+            throw new Error("No se pudo aplicar el resultado en los campos de Medios.");
+          }
+
+          await addDebugLog(cfg, "auto_upload_done", { tabId, attachmentId, attempts: applied.attempts });
+        });
+
+        sendResponse({ ok: true, attachmentId });
+      } catch (err) {
+        const cfg = await getConfigCached().catch(() => ({}));
+        await addDebugLog(cfg, "auto_upload_error", { attachmentId, error: err?.message || String(err) });
+        sendResponse({ ok: false, error: err?.message || String(err) });
+      }
+    })();
+    return true;
+  }
+
 
   // 2c) Batch process selected WP media items (overlay button)
   if (msg.type === "MACA_BATCH_PROCESS_SELECTED") {
@@ -1290,17 +1410,19 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
             out = await analyzeImage({ imageUrl, filenameContext, pageUrl: sender.tab?.url || "" });
             results.push({ attachmentId, ...out, imageUrl });
 
-            // Auto-apply if enabled
-            if (cfg.wpAutoApply) {
-              await chrome.tabs.sendMessage(tabId, {
-                type: "MACA_APPLY_TO_ATTACHMENT",
-                attachmentId,
-                alt: out.alt || "",
-                title: out.title || "",
-                leyenda: out.leyenda || "",
-                generateMode: String(cfg.generateMode || "both"),
-                requireMedia: (cfg.wpAutoApplyRequireMedia !== undefined) ? !!cfg.wpAutoApplyRequireMedia : true
-              });
+            // In batch mode, always try to apply results into WP fields.
+            const applyPayload = {
+              type: "MACA_APPLY_TO_ATTACHMENT",
+              attachmentId,
+              alt: out.alt || "",
+              title: out.title || "",
+              leyenda: out.leyenda || "",
+              generateMode: String(cfg.generateMode || "both"),
+              requireMedia: (cfg.wpAutoApplyRequireMedia !== undefined) ? !!cfg.wpAutoApplyRequireMedia : true
+            };
+            const applied = await autoApplyAttachmentWithRetry(tabId, applyPayload, { attempts: 12, delayMs: 220 });
+            if (!applied.ok) {
+              throw new Error("No se pudo aplicar el resultado en los campos de Medios.");
             }
 
             await addDebugLog(cfg, "batch_item_ok", { i: i + 1, total: items.length, attachmentId });

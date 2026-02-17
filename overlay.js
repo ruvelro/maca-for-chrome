@@ -727,13 +727,14 @@ function updateBatchButtonUi() {
   UI.batchBtn.textContent = show ? `Procesar selección (${n})` : "Procesar selección";
 }
 
-  // Copia ALT y leyenda como *dos* eventos de copiado seguidos.
+  // Copia ALT, title y leyenda como eventos de copiado consecutivos.
   // Importante: el portapapeles "actual" se queda con el último texto,
-  // pero la mayoría de historiales/gestores de portapapeles guardan ambos.
-  async function copyBothAsTwoEntries(alt, leyenda, btn, label) {
+  // pero la mayoría de historiales/gestores de portapapeles guardan todos.
+  async function copyAllAsEntries(alt, title, leyenda, btn, label) {
     const a = (alt || "").trim();
+    const t = (title || "").trim();
     const c = (leyenda || "").trim();
-    if (!a && !c) return;
+    if (!a && !t && !c) return;
 
     let ok = true;
 
@@ -742,7 +743,7 @@ function updateBatchButtonUi() {
     try {
       const res = await chrome.runtime.sendMessage({
         type: "MACA_COPY_SEQUENCE",
-        texts: [a, c],
+        texts: [a, t, c],
         delayMs: 320
       });
       if (res?.ok) {
@@ -757,12 +758,16 @@ function updateBatchButtonUi() {
     try {
       if (a) await navigator.clipboard.writeText(a);
       await new Promise((r) => setTimeout(r, 220));
+      if (t) await navigator.clipboard.writeText(t);
+      await new Promise((r) => setTimeout(r, 220));
       if (c) await navigator.clipboard.writeText(c);
     } catch (e) {
       ok = false;
       // Ultimate fallback: copy in a single entry
       try {
         await navigator.clipboard.writeText(`ALT: ${a}
+
+Title: ${t}
 
 Leyenda: ${c}`);
         ok = true;
@@ -850,7 +855,7 @@ Leyenda: ${c}`);
               <button id="maca-copy-alt">Copiar ALT</button>
               <button id="maca-copy-title">Copiar title</button>
               <button id="maca-copy-cap">Copiar leyenda</button>
-              <button id="maca-copy-both" class="primary">Copiar ambos</button>
+              <button id="maca-copy-both" class="primary">Copiar todo</button>
             </div>
           </div>
         </div>
@@ -971,7 +976,7 @@ Leyenda: ${c}`);
       STATE.alt = alt;
       STATE.title = title || alt;
       STATE.leyenda = leyenda;
-      copyBothAsTwoEntries(alt, leyenda, e.currentTarget, "Copiar ambos");
+      copyAllAsEntries(alt, STATE.title, leyenda, e.currentTarget, "Copiar todo");
       applyToWordPressFields({ alt, title: STATE.title, leyenda });
     });
 
