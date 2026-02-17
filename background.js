@@ -563,6 +563,13 @@ function markAutoProcessed(tabId, attachmentId) {
   byTab.set(String(attachmentId), Date.now());
 }
 
+function unmarkAutoProcessed(tabId, attachmentId) {
+  if (tabId == null || !attachmentId) return;
+  const byTab = __autoUploadSeenByTab.get(tabId);
+  if (!byTab) return;
+  byTab.delete(String(attachmentId));
+}
+
 function enqueueAutoUploadJob(tabId, jobFn) {
   const prev = __autoUploadQueueByTab.get(tabId) || Promise.resolve();
   const next = prev.catch(() => {}).then(jobFn);
@@ -917,6 +924,76 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSig
       throw new Error(json?.error?.message || json?.error || json?.message || "Error OpenRouter");
     }
     rawOutput = pickTextFromOpenAICompat(json);
+  } else if (cfg.provider === "anthropic") {
+    const model = String(cfg.model || "claude-3-5-haiku-latest").trim();
+    const base64 = dataUrl.split(",")[1];
+
+    const res = await fetchWithTimeout("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": cfg.apiKey,
+        "anthropic-version": "2023-06-01",
+        // Needed for direct browser calls from extensions.
+        "anthropic-dangerous-direct-browser-access": "true"
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 500,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: finalPrompt },
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: mime,
+                  data: base64
+                }
+              }
+            ]
+          }
+        ]
+      })
+    });
+
+    const json = await safeJson(res);
+    if (!res.ok) {
+      throw new Error(json?.error?.message || json?.error?.type || json?.message || "Error Anthropic");
+    }
+    rawOutput = Array.isArray(json?.content)
+      ? json.content.filter(p => p?.type === "text").map(p => p?.text || "").join("\n")
+      : "";
+  } else if (cfg.provider === "groq") {
+    const model = String(cfg.model || "meta-llama/llama-4-scout-17b-16e-instruct").trim();
+    const res = await fetchWithTimeout("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${cfg.apiKey}`
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: finalPrompt },
+              { type: "image_url", image_url: { url: dataUrl } }
+            ]
+          }
+        ],
+        max_tokens: 500
+      })
+    });
+
+    const json = await safeJson(res);
+    if (!res.ok) {
+      throw new Error(json?.error?.message || json?.error || json?.message || "Error Groq");
+    }
+    rawOutput = pickTextFromOpenAICompat(json);
   } else if (cfg.provider === "local_ollama") {
     const endpoint = normalizeEndpoint(cfg.localEndpoint || "http://127.0.0.1:11434");
     const model = (cfg.localModel || cfg.model || "llava:7b").trim();
@@ -1202,6 +1279,50 @@ async function testCurrentConfig() {
     return okRes({ endpoint: "https://openrouter.ai/api/v1/chat/completions" });
   }
 
+  // Cloud: Anthropic
+  if (provider === "anthropic") {
+    if (!cfg.apiKey) throw new Error("Falta la API key (Anthropic). Ve a Opciones.");
+    if (!model) throw new Error("Falta el modelo (Anthropic). Ve a Opciones.");
+    const res = await fetchWithTimeout("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": cfg.apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true"
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 1,
+        messages: [{ role: "user", content: [{ type: "text", text: "ok" }] }]
+      })
+    }, 12000);
+    const json = await safeJson(res);
+    if (!res.ok) throw new Error(json?.error?.message || json?.error?.type || json?.message || "Error Anthropic al validar.");
+    return okRes({ endpoint: "https://api.anthropic.com/v1/messages" });
+  }
+
+  // Cloud: Groq
+  if (provider === "groq") {
+    if (!cfg.apiKey) throw new Error("Falta la API key (Groq). Ve a Opciones.");
+    if (!model) throw new Error("Falta el modelo (Groq). Ve a Opciones.");
+    const res = await fetchWithTimeout("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${cfg.apiKey}`
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: "ping" }],
+        max_tokens: 1
+      })
+    }, 12000);
+    const json = await safeJson(res);
+    if (!res.ok) throw new Error(json?.error?.message || json?.error || json?.message || "Error Groq al validar.");
+    return okRes({ endpoint: "https://api.groq.com/openai/v1/chat/completions" });
+  }
+
   // Local: Ollama
   if (provider === "local_ollama") {
     const endpoint = normalizeEndpoint(cfg.localEndpoint || "http://127.0.0.1:11434");
@@ -1314,6 +1435,7 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
       const attachmentId = String(msg?.attachmentId || "");
       const imageUrl = String(msg?.imageUrl || "");
       const filenameContext = String(msg?.filenameContext || "");
+      let markedSeen = false;
       try {
         if (tabId == null) throw new Error("No hay pestaña activa.");
         if (!attachmentId || !imageUrl) throw new Error("Faltan datos del adjunto recién subido.");
@@ -1333,6 +1455,7 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
           return;
         }
         markAutoProcessed(tabId, attachmentId);
+        markedSeen = true;
 
         await enqueueAutoUploadJob(tabId, async () => {
           await addDebugLog(cfg, "auto_upload_start", { tabId, attachmentId });
@@ -1362,6 +1485,7 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
 
         sendResponse({ ok: true, attachmentId });
       } catch (err) {
+        if (markedSeen) unmarkAutoProcessed(tabId, attachmentId);
         const cfg = await getConfigCached().catch(() => ({}));
         await addDebugLog(cfg, "auto_upload_error", { attachmentId, error: err?.message || String(err) });
         sendResponse({ ok: false, error: err?.message || String(err) });

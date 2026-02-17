@@ -616,7 +616,16 @@
     for (const el of els) {
       const id = String(el.getAttribute("data-id") || el.dataset?.id || "");
       const thumb = el.querySelector(".thumbnail") || el.querySelector("img") || el;
-      const cand = findCandidate(thumb) || findCandidate(el);
+      let cand = extractCandidateFromAttachmentEl(el) || findCandidate(thumb) || findCandidate(el);
+      if (cand?.imageUrl && String(cand.imageUrl).startsWith("blob:")) {
+        const selectedCand = findSelectedWpCandidate();
+        if (selectedCand?.imageUrl && !String(selectedCand.imageUrl).startsWith("blob:")) {
+          cand = {
+            imageUrl: selectedCand.imageUrl,
+            filenameContext: firstTruthy(cand.filenameContext, selectedCand.filenameContext)
+          };
+        }
+      }
       if (!cand || !cand.imageUrl) continue;
       const dedupeKey = id || cand.imageUrl;
       if (seen.has(dedupeKey)) continue;

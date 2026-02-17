@@ -103,7 +103,7 @@ function renderItem(item) {
 
   const bBoth = document.createElement('button');
   bBoth.className = 'btn primary';
-  bBoth.textContent = 'Copiar ambos';
+  bBoth.textContent = 'Copiar todo';
   bBoth.addEventListener('click', async () => {
     const a = (item.alt || '').trim();
     const t = (item.title || '').trim();

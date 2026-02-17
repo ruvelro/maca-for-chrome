@@ -120,19 +120,23 @@ const PROVIDERS = {
   openai: {
     defaultModel: "gpt-5-mini",
     models: [
-      "gpt-5.2",
       "gpt-5.2-pro",
+      "gpt-5.2",
+      "gpt-5.1",
+      "gpt-5",
       "gpt-5-mini",
       "gpt-5-nano",
       "gpt-4.1",
       "gpt-4.1-mini",
       "gpt-4.1-nano",
+      "gpt-4o-mini",
       "gpt-4o"
     ]
   },
   gemini: {
     defaultModel: "gemini-2.5-flash",
     models: [
+      "gemini-3-pro-image-preview",
       "gemini-3-pro-preview",
       "gemini-3-flash-preview",
       "gemini-2.5-pro",
@@ -140,10 +144,35 @@ const PROVIDERS = {
       "gemini-2.5-flash-lite"
     ]
   },
+  anthropic: {
+    defaultModel: "claude-3-5-haiku-latest",
+    models: [
+      "claude-3-5-haiku-latest",
+      "claude-sonnet-4-0"
+    ]
+  },
+  groq: {
+    defaultModel: "meta-llama/llama-4-scout-17b-16e-instruct",
+    models: [
+      "meta-llama/llama-4-scout-17b-16e-instruct",
+      "meta-llama/llama-4-maverick-17b-128e-instruct"
+    ]
+  },
   openrouter: {
     defaultModel: "z-ai/glm-4.6v",
     models: [
-      "z-ai/glm-4.6v"
+      "z-ai/glm-4.6v",
+      "qwen/qwen2.5-vl-32b-instruct",
+      "meta-llama/llama-4-scout",
+      "meta-llama/llama-4-maverick",
+      "google/gemini-2.5-flash-lite",
+      "google/gemini-2.5-flash",
+      "google/gemini-3-flash-preview",
+      "google/gemini-3-pro-preview",
+      "google/gemini-3-pro-image-preview",
+      "openai/gpt-4o-mini",
+      "openai/gpt-5-mini",
+      "openai/gpt-5"
     ]
   }
 };
@@ -193,6 +222,14 @@ function applyProviderUi(provider, cfg = {}) {
       if (els.apiKeyLabel) els.apiKeyLabel.textContent = "API key (OpenRouter)";
       if (els.apiKeyHelp) els.apiKeyHelp.textContent = "Usa una API key de OpenRouter.";
       if (els.apiKey) els.apiKey.placeholder = "Pega aquí tu API key de OpenRouter";
+    } else if (provider === "anthropic") {
+      if (els.apiKeyLabel) els.apiKeyLabel.textContent = "API key (Anthropic)";
+      if (els.apiKeyHelp) els.apiKeyHelp.textContent = "Usa una API key de Anthropic.";
+      if (els.apiKey) els.apiKey.placeholder = "Pega aquí tu API key de Anthropic";
+    } else if (provider === "groq") {
+      if (els.apiKeyLabel) els.apiKeyLabel.textContent = "API key (Groq)";
+      if (els.apiKeyHelp) els.apiKeyHelp.textContent = "Usa una API key de Groq.";
+      if (els.apiKey) els.apiKey.placeholder = "Pega aquí tu API key de Groq";
     } else {
       if (els.apiKeyLabel) els.apiKeyLabel.textContent = "API key";
       if (els.apiKey) els.apiKey.placeholder = "Pega aquí tu API key";
@@ -250,6 +287,14 @@ function updateApiKeyHelpText() {
   }
   if (provider === "openrouter") {
     els.apiKeyHelp.textContent = "API key de OpenRouter. Puedes sincronizarla con Chrome si quieres.";
+    return;
+  }
+  if (provider === "anthropic") {
+    els.apiKeyHelp.textContent = "API key de Anthropic. Puedes sincronizarla con Chrome si quieres.";
+    return;
+  }
+  if (provider === "groq") {
+    els.apiKeyHelp.textContent = "API key de Groq. Puedes sincronizarla con Chrome si quieres.";
     return;
   }
   const syncOn = !!els.syncApiKey?.checked;
