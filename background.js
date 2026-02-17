@@ -169,6 +169,32 @@ function safeHost(pageUrl) {
   try { return new URL(pageUrl || "").hostname || ""; } catch (_) { return ""; }
 }
 
+function extractFilenameFromImageUrl(imageUrl) {
+  try {
+    const u = new URL(String(imageUrl || ""));
+    // data: URLs do not provide a meaningful filename.
+    if (u.protocol === "data:") return "";
+    const last = String(u.pathname || "").split("/").filter(Boolean).pop() || "";
+    if (!last) return "";
+    // Defensive decode for URLs like ".../mi%20imagen.jpg"
+    return decodeURIComponent(last);
+  } catch (_) {
+    return "";
+  }
+}
+
+function buildFilenameContextBlock({ filenameContext, imageUrl }) {
+  const uiCtx = String(filenameContext || "").trim();
+  const urlFilename = extractFilenameFromImageUrl(imageUrl);
+  const parts = [];
+
+  if (uiCtx) parts.push(`texto asociado/archivo en la UI: "${uiCtx}"`);
+  if (urlFilename && urlFilename !== uiCtx) parts.push(`nombre de archivo detectado en URL: "${urlFilename}"`);
+
+  if (!parts.length) return "";
+  return `\nContexto adicional (puede ser genérico o erróneo, úsalo solo como pista): ${parts.join(" | ")}\n`;
+}
+
 function truncateStrings(obj, maxLen = 500) {
   if (!obj || typeof obj !== "object") return obj;
   if (Array.isArray(obj)) return obj.slice(0, 50).map(v => truncateStrings(v, maxLen));
@@ -804,9 +830,7 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSig
 
   const { dataUrl, mime } = await toBase64DataUrlFromUrl(imageUrl);
 
-  const contextBlock = filenameContext
-    ? `\nContexto adicional (nombre de archivo, no fiable): "${filenameContext}"\n`
-    : "";
+  const contextBlock = buildFilenameContextBlock({ filenameContext, imageUrl });
 
   const mode = String(modeOverride || cfg.generateMode || "both"); // both | alt | caption
   const altMaxLength = Number.isFinite(Number(cfg.altMaxLength)) ? Number(cfg.altMaxLength) : 125;
