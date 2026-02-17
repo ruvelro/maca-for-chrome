@@ -41,6 +41,7 @@ const DEFAULT_SYNC_CFG = {
   // Caption template
   captionTemplateEnabled: false,
   captionTemplate: "{{caption}}",
+  captionSignatureText: "",
   // Debug
   debugEnabled: false,
   shortcutEnabled: false,
@@ -250,46 +251,26 @@ function adjustDefaultPromptForModeAndSeo(tpl, { mode, altMaxLength, avoidImageP
 
   // Mode-specific trimming to save tokens.
   const m = String(mode || "both");
+  const schema =
+    m === "alt"
+      ? '{"alt":"...","title":"...","decorativa":false}'
+      : (m === "caption"
+        ? '{"leyenda":"..."}'
+        : '{"alt":"...","title":"...","leyenda":"...","decorativa":false}');
+
   if (m === "alt") {
     // Remove LEYENDA block (from LEYENDA: up to Idioma:)
     s = s.replace(/\n\s*LEYENDA:[\s\S]*?(\n\s*Idioma:)/i, "\n$1");
-
-    // Ensure JSON schema requests only alt (supports optional decorativa flag)
-    s = s.replace(/\{\s*"alt"\s*:\s*"\.\.\."\s*,\s*"leyenda"\s*:\s*"\.\.\."\s*,\s*"decorativa"\s*:\s*(false|true)\s*\}/gi, '{"alt":"...","decorativa":false}');
-
-    // Ensure JSON schema requests only alt
-    s = s.replace(/\{\s*"alt"\s*:\s*"\.\.\."\s*,\s*"leyenda"\s*:\s*"\.\.\."\s*\}/i, '{"alt":"..."}');
-    s = s.replace(/\{\s*"alt"\s*:\s*"\.\.\."\s*,\s*"leyenda"\s*:\s*"\.\.\."\s*\}/i, '{"alt":"..."}');
-    s = s.replace(/\{\s*"alt"\s*:\s*"\.\.\."\s*,\s*"leyenda"\s*:\s*"\.\.\."\s*\}/g, '{"alt":"..."}');
-    s = s.replace(/\{\s*"alt"\s*:\s*"\.\.\."\s*,\s*"leyenda"\s*:\s*"\.\.\."\s*\}/g, '{"alt":"..."}');
-    s = s.replace(/\{\s*"alt"\s*:\s*"\.\.\."\s*,\s*"leyenda"\s*:\s*"\.\.\."\s*\}/gi, '{"alt":"..."}');
-    s = s.replace(/\{\s*"alt"\s*:\s*"\.\.\."\s*,\s*"leyenda"\s*:\s*"\.\.\."\s*\}/gi, '{"alt":"..."}');
-    s = s.replace(/\{\s*"alt"\s*:\s*"\.\.\."\s*,\s*"leyenda"\s*:\s*"\.\.\."\s*\}/g, '{"alt":"..."}');
-    // Fallback: replace any JSON schema line that mentions both keys
-    s = s.replace(/\{\s*"alt"\s*:\s*"\.\.\."\s*,\s*"leyenda"\s*:\s*"\.\.\."\s*\}/gi, '{"alt":"..."}');
-    s = s.replace(/\{\s*"alt"\s*:\s*"\.\.\."\s*,\s*"leyenda"\s*:\s*"\.\.\."\s*\}/gi, '{"alt":"..."}');
-    s = s.replace(/\{\s*"alt"\s*:\s*"\.\.\."\s*,\s*"leyenda"\s*:\s*"\.\.\."\s*\}/gi, '{"alt":"..."}');
-    // If the template still contains a schema with both, just override at the end.
-    if (!/\{\s*"alt"\s*:\s*"\.\.\."\s*\}/i.test(s)) {
-      s = s.replace(/Devuelve SOLO JSON válido con:[\s\S]*$/i, (tail) => {
-        if (/\{/.test(tail)) {
-          return `Devuelve SOLO JSON válido con:\n{"alt":"...","decorativa":false}`;
-        }
-        return tail;
-      });
-    }
   } else if (m === "caption") {
-    // Remove ALT block (from ALT: up to LEYENDA:)
+    // Remove ALT/TITLE block (from ALT: up to LEYENDA:)
     s = s.replace(/\n\s*ALT:[\s\S]*?(\n\s*LEYENDA:)/i, "\n$1");
+    s = s.replace(/\n\s*TITLE:[\s\S]*?(\n\s*LEYENDA:)/i, "\n$1");
+  }
 
-    // Ensure JSON schema requests only leyenda (supports optional decorativa flag)
-    s = s.replace(/\{\s*"alt"\s*:\s*"\.\.\."\s*,\s*"leyenda"\s*:\s*"\.\.\."\s*,\s*"decorativa"\s*:\s*(false|true)\s*\}/gi, '{"leyenda":"...","decorativa":false}');
-
-    // Ensure JSON schema requests only leyenda
-    s = s.replace(/\{\s*"alt"\s*:\s*"\.\.\."\s*,\s*"leyenda"\s*:\s*"\.\.\."\s*\}/gi, '{"leyenda":"..."}');
-    if (!/\{\s*"leyenda"\s*:\s*"\.\.\."\s*\}/i.test(s)) {
-      s = s.replace(/Devuelve SOLO JSON válido con:[\s\S]*$/i, () => `Devuelve SOLO JSON válido con:\n{"leyenda":"..."}`);
-    }
+  if (/Devuelve SOLO JSON válido con:/i.test(s)) {
+    s = s.replace(/Devuelve SOLO JSON válido con:[\s\S]*$/i, `Devuelve SOLO JSON válido con:\n${schema}`);
+  } else {
+    s += `\n\nDevuelve SOLO JSON válido con:\n${schema}`;
   }
 
   // Reinforce strict JSON
@@ -376,16 +357,17 @@ async function copySequenceToClipboard(texts, delayMs = 260) {
 }
 
 // =========================
-// Context menu (single entry, smart visibility)
-// - Visible on wp-admin everywhere (even inside editors/iframes).
-// - Outside wp-admin, visible only on real images.
-// - Title switches: "imagen" vs "miniatura".
+// Context menu (WordPress-only)
+// - Two entries:
+//   1) Analyze normally.
+//   2) Analyze and apply caption signature.
 //
 // IMPORTANT: We avoid removeAll/recreate cycles because they can race on MV3 wake-ups
 // and cause "Cannot create item with duplicate id" in Chromium.
 // =========================
 
-const MENU_ID_SMART = "maca-analyze";
+const MENU_ID_NORMAL = "maca-analyze";
+const MENU_ID_SIGNED = "maca-analyze-signed";
 
 function isWpAdminUrl(u) {
   const s = String(u || "");
@@ -399,10 +381,6 @@ function resolveOnCompleteAction(cfg, pageUrl) {
   return isWpAdminUrl(pageUrl) ? action : "none";
 }
 
-function hasRealImageFromInfo(info) {
-  return !!info?.srcUrl || info?.mediaType === "image";
-}
-
 let __menuEnsured = false;
 function ensureMenu() {
   if (__menuEnsured) return;
@@ -411,9 +389,22 @@ function ensureMenu() {
   try {
     chrome.contextMenus.create(
       {
-        id: MENU_ID_SMART,
-        title: "Analizar con maca (ALT + leyenda)",
-        contexts: ["all"]
+        id: MENU_ID_NORMAL,
+        title: "Analizar imagen con maca",
+        contexts: ["all"],
+        documentUrlPatterns: ["*://*/*wp-admin/*"]
+      },
+      () => {
+        // Always read lastError to prevent "Unchecked runtime.lastError" noise.
+        void chrome.runtime.lastError;
+      }
+    );
+    chrome.contextMenus.create(
+      {
+        id: MENU_ID_SIGNED,
+        title: "Analizar y rellenar con firma",
+        contexts: ["all"],
+        documentUrlPatterns: ["*://*/*wp-admin/*"]
       },
       () => {
         // Always read lastError to prevent "Unchecked runtime.lastError" noise.
@@ -520,7 +511,7 @@ if (chrome?.commands?.onCommand?.addListener) {
       });
 
       try {
-        const { alt, leyenda, decorativa } = await analyzeImage({
+        const { alt, title, leyenda, decorativa } = await analyzeImage({
           imageUrl: imgUrl,
           filenameContext,
           pageUrl
@@ -530,6 +521,7 @@ if (chrome?.commands?.onCommand?.addListener) {
           type: "MACA_OVERLAY_RESULT",
           jobId,
           alt,
+          title,
           leyenda
         });
       } catch (err) {
@@ -563,22 +555,17 @@ if (chrome?.runtime?.onMessage?.addListener) {
   });
 }
 
-// Keep menu title/visibility in sync right before showing.
+// Keep menu visibility in sync right before showing.
 if (chrome?.contextMenus?.onShown?.addListener) {
   chrome.contextMenus.onShown.addListener((info, tab) => {
     try {
       ensureMenu();
-      const tabId = tab?.id;
       const pageUrl = info?.pageUrl || tab?.url || "";
       const inWp = isWpAdminUrl(pageUrl);
-      const hasRealImage = hasRealImageFromInfo(info) || (tabId != null && __lastCandidateByTab.has(tabId));
-
-      const visible = inWp || hasRealImage;
-      const title = hasRealImage
-        ? "Analizar imagen con maca (ALT + leyenda)"
-        : (inWp ? "Analizar con maca (miniatura: ALT + leyenda)" : "Analizar imagen con maca (ALT + leyenda)");
-
-      chrome.contextMenus.update(MENU_ID_SMART, { visible, title }, () => {
+      chrome.contextMenus.update(MENU_ID_NORMAL, { visible: inWp }, () => {
+        void chrome.runtime.lastError;
+      });
+      chrome.contextMenus.update(MENU_ID_SIGNED, { visible: inWp }, () => {
         void chrome.runtime.lastError;
         chrome.contextMenus.refresh?.();
       });
@@ -643,11 +630,20 @@ if (chrome?.contextMenus?.onClicked?.addListener) chrome.contextMenus.onClicked.
     const jobId = crypto.randomUUID();
 
 
-    if (info.menuItemId === MENU_ID_SMART) {
+    if (info.menuItemId === MENU_ID_NORMAL || info.menuItemId === MENU_ID_SIGNED) {
       const inWp = isWpAdminUrl(t.url || info?.pageUrl || "");
+      const useCaptionSignature = info.menuItemId === MENU_ID_SIGNED;
 
-      // Outside wp-admin, this menu only appears on real images.
-      // Inside wp-admin, it appears everywhere, so we must resolve candidates.
+      if (!inWp) {
+        await ensureOverlayInjected(tabId);
+        await sendOverlay(tabId, {
+          type: "MACA_OVERLAY_ERROR",
+          jobId,
+          error: "maca está limitada a WordPress (wp-admin)."
+        });
+        return;
+      }
+
       let imgUrl = info.srcUrl || "";
       let filenameContext = "";
 
@@ -697,16 +693,18 @@ if (chrome?.contextMenus?.onClicked?.addListener) chrome.contextMenus.onClicked.
 
       // Run analysis and update overlay when ready
       try {
-        const { alt, leyenda, decorativa } = await analyzeImage({
+        const { alt, title, leyenda, decorativa } = await analyzeImage({
           imageUrl: imgUrl,
           filenameContext,
-          pageUrl
+          pageUrl,
+          withCaptionSignature: useCaptionSignature
         });
 
         await sendOverlay(tabId, {
           type: "MACA_OVERLAY_RESULT",
           jobId,
           alt,
+          title,
           leyenda
         });
       } catch (err) {
@@ -725,7 +723,10 @@ if (chrome?.contextMenus?.onClicked?.addListener) chrome.contextMenus.onClicked.
 // Shared analysis pipeline (WP button + context menu)
 // =========================
 
-async function analyzeImage({ imageUrl, filenameContext, pageUrl }) {
+async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSignature = false }) {
+  if (!isWpAdminUrl(pageUrl || "")) {
+    throw new Error("maca está limitada a WordPress (wp-admin).");
+  }
   if (!imageUrl || !isAllowedImageUrl(imageUrl)) {
     throw new Error("URL de imagen no soportada por seguridad.");
   }
@@ -751,6 +752,7 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl }) {
   const allowDecorativeAltEmpty = (cfg.allowDecorativeAltEmpty !== undefined) ? !!cfg.allowDecorativeAltEmpty : false;
   const captionTemplateEnabled = (cfg.captionTemplateEnabled !== undefined) ? !!cfg.captionTemplateEnabled : false;
   const captionTemplate = String(cfg.captionTemplate || "{{caption}}");
+  const captionSignatureText = String(cfg.captionSignatureText || "").trim();
 
   const usingCustomPrompt = !!(cfg.prompt && cfg.prompt.trim());
   let basePrompt = usingCustomPrompt ? cfg.prompt : getPromptForProfile(cfg.seoProfile);
@@ -827,6 +829,38 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl }) {
 
     rawOutput =
       json?.candidates?.[0]?.content?.parts?.map(p => p.text).join("\n") || "";
+  } else if (cfg.provider === "openrouter") {
+    const model = String(cfg.model || "z-ai/glm-4.6v").trim();
+    const headers = {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${cfg.apiKey}`,
+      "HTTP-Referer": "https://wordpress.org",
+      "X-Title": "maca for Chrome"
+    };
+
+    const res = await fetchWithTimeout("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: finalPrompt },
+              { type: "image_url", image_url: { url: dataUrl } }
+            ]
+          }
+        ],
+        max_tokens: 500
+      })
+    });
+
+    const json = await safeJson(res);
+    if (!res.ok) {
+      throw new Error(json?.error?.message || json?.error || json?.message || "Error OpenRouter");
+    }
+    rawOutput = pickTextFromOpenAICompat(json);
   } else if (cfg.provider === "local_ollama") {
     const endpoint = normalizeEndpoint(cfg.localEndpoint || "http://127.0.0.1:11434");
     const model = (cfg.localModel || cfg.model || "llava:7b").trim();
@@ -945,6 +979,7 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl }) {
 
   // Validate based on selected mode
   const altProvided = typeof parsed?.alt === "string" && parsed.alt.trim().length > 0;
+  const titleProvided = typeof parsed?.title === "string" && parsed.title.trim().length > 0;
   const captionProvided = typeof parsed?.leyenda === "string" && parsed.leyenda.trim().length > 0;
 
   const altAllowedEmpty = allowDecorativeAltEmpty && decorative;
@@ -960,6 +995,11 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl }) {
   }
 
   const altFinal = altProvided ? normalizeAltText(parsed.alt, altMaxLength, avoidImagePrefix) : "";
+  const titleFinal = normalizeCaptionText(
+    titleProvided
+      ? parsed.title
+      : (altFinal || "")
+  );
   let leyendaFinal = captionProvided ? normalizeCaptionText(parsed.leyenda) : "";
 
   // Apply caption template if enabled and we have a caption
@@ -972,6 +1012,10 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl }) {
       date: new Date().toISOString().slice(0, 10)
     };
     leyendaFinal = normalizeCaptionText(renderSimpleTemplate(captionTemplate, vars));
+  }
+
+  if (withCaptionSignature && leyendaFinal && captionSignatureText) {
+    leyendaFinal = normalizeCaptionText(`${leyendaFinal} ${captionSignatureText}`);
   }
 
   if (mode === "alt" && !altFinal && !altAllowedEmpty) throw new Error("La IA no devolvió un ALT válido.");
@@ -987,6 +1031,7 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl }) {
     mode: mode,
     site: safeHost(pageUrl),
     alt: altFinal,
+    title: titleFinal,
     leyenda: leyendaFinal,
     decorativa: decorative,
     source: "contextmenu",
@@ -1018,7 +1063,7 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl }) {
     });
   }
 
-  return { alt: record.alt, leyenda: record.leyenda, decorativa: record.decorativa };
+  return { alt: record.alt, title: record.title, leyenda: record.leyenda, decorativa: record.decorativa };
 }
 
 // =========================
@@ -1078,6 +1123,29 @@ async function testCurrentConfig() {
     return okRes({ testedEndpoint: "generateContent" });
   }
 
+  // Cloud: OpenRouter
+  if (provider === "openrouter") {
+    if (!cfg.apiKey) throw new Error("Falta la API key (OpenRouter). Ve a Opciones.");
+    if (!model) throw new Error("Falta el modelo (OpenRouter). Ve a Opciones.");
+    const res = await fetchWithTimeout("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${cfg.apiKey}`,
+        "HTTP-Referer": "https://wordpress.org",
+        "X-Title": "maca for Chrome"
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: "ping" }],
+        max_tokens: 1
+      })
+    }, 12000);
+    const json = await safeJson(res);
+    if (!res.ok) throw new Error(json?.error?.message || json?.error || json?.message || "Error OpenRouter al validar.");
+    return okRes({ endpoint: "https://openrouter.ai/api/v1/chat/completions" });
+  }
+
   // Local: Ollama
   if (provider === "local_ollama") {
     const endpoint = normalizeEndpoint(cfg.localEndpoint || "http://127.0.0.1:11434");
@@ -1135,13 +1203,13 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
         const filenameContext = msg.filenameContext || "";
         const pageUrl = sender.tab?.url || "";
 
-        const { alt, leyenda, decorativa } = await analyzeImage({
+        const { alt, title, leyenda, decorativa } = await analyzeImage({
           imageUrl,
           filenameContext,
           pageUrl
         });
 
-        sendResponse({ alt, leyenda, decorativa });
+        sendResponse({ alt, title, leyenda, decorativa });
       } catch (err) {
         sendResponse({ error: err.message || String(err) });
       }
@@ -1157,8 +1225,8 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
         const imageUrl = msg.imageUrl;
         const filenameContext = msg.filenameContext || "";
         const pageUrl = msg.pageUrl || sender.tab?.url || "";
-        const { alt, leyenda, decorativa } = await analyzeImage({ imageUrl, filenameContext, pageUrl });
-        sendResponse({ alt, leyenda, decorativa });
+        const { alt, title, leyenda, decorativa } = await analyzeImage({ imageUrl, filenameContext, pageUrl });
+        sendResponse({ alt, title, leyenda, decorativa });
       } catch (err) {
         sendResponse({ error: err?.message || String(err) });
       }
@@ -1228,6 +1296,7 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
                 type: "MACA_APPLY_TO_ATTACHMENT",
                 attachmentId,
                 alt: out.alt || "",
+                title: out.title || "",
                 leyenda: out.leyenda || "",
                 generateMode: String(cfg.generateMode || "both"),
                 requireMedia: (cfg.wpAutoApplyRequireMedia !== undefined) ? !!cfg.wpAutoApplyRequireMedia : true
@@ -1284,9 +1353,16 @@ function normalizeModelJson(text) {
   };
 
   let obj = safeJsonParse(raw);
-  if (obj && (obj.alt != null || obj.leyenda != null)) {
+  const pickTitle = (o) => {
+    if (!o || typeof o !== "object") return "";
+    if (o.title != null) return String(o.title);
+    if (o.titulo != null) return String(o.titulo);
+    return "";
+  };
+  if (obj && (obj.alt != null || obj.leyenda != null || obj.title != null || obj.titulo != null)) {
     return {
       alt: obj.alt != null ? String(obj.alt) : "",
+      title: pickTitle(obj),
       leyenda: obj.leyenda != null ? String(obj.leyenda) : "",
       decorativa: toDecorativeBool(obj.decorativa)
     };
@@ -1295,9 +1371,10 @@ function normalizeModelJson(text) {
   const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
   if (fenced?.[1]) {
     obj = safeJsonParse(fenced[1].trim());
-    if (obj && (obj.alt != null || obj.leyenda != null)) {
+    if (obj && (obj.alt != null || obj.leyenda != null || obj.title != null || obj.titulo != null)) {
       return {
         alt: obj.alt != null ? String(obj.alt) : "",
+        title: pickTitle(obj),
         leyenda: obj.leyenda != null ? String(obj.leyenda) : "",
         decorativa: toDecorativeBool(obj.decorativa)
       };
@@ -1307,9 +1384,10 @@ function normalizeModelJson(text) {
   const brace = raw.match(/\{[\s\S]*?\}/);
   if (brace?.[0]) {
     obj = safeJsonParse(brace[0]);
-    if (obj && (obj.alt != null || obj.leyenda != null)) {
+    if (obj && (obj.alt != null || obj.leyenda != null || obj.title != null || obj.titulo != null)) {
       return {
         alt: obj.alt != null ? String(obj.alt) : "",
+        title: pickTitle(obj),
         leyenda: obj.leyenda != null ? String(obj.leyenda) : "",
         decorativa: toDecorativeBool(obj.decorativa)
       };

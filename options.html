@@ -1,9 +1,9 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="es">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>maca — Opciones</title>
+  <title>maca - Opciones</title>
   <link rel="stylesheet" href="options.css" />
 </head>
 <body>
@@ -58,6 +58,7 @@
         <select id="provider">
           <option value="openai">OpenAI</option>
           <option value="gemini">Gemini</option>
+          <option value="openrouter">OpenRouter</option>
           <option value="local_ollama">Local (Ollama · visión)</option>
           <option value="local_openai">Local (OpenAI-compatible)</option>
         </select>
@@ -143,7 +144,7 @@
           <button id="openShortcuts" type="button" class="secondary">Configurar atajo</button>
         </div>
         <div class="field" style="margin:0;">
-          <div class="help" style="margin:0;">Atajo actual: <b id="shortcutCurrent">—</b></div>
+          <div class="help" style="margin:0;">Atajo actual: <b id="shortcutCurrent">-</b></div>
         </div>
       </div>
     </div>
@@ -152,8 +153,8 @@
       <div class="field">
         <label for="generateMode">Qué generar</label>
         <select id="generateMode">
-          <option value="both">ALT y leyenda</option>
-          <option value="alt">Solo ALT</option>
+          <option value="both">ALT, title y leyenda</option>
+          <option value="alt">ALT y title</option>
           <option value="caption">Solo leyenda</option>
         </select>
         <div class="help">Ahorra tiempo y tokens cuando solo necesitas uno de los campos.</div>
@@ -169,7 +170,7 @@
     <div class="field" style="margin-top:10px;">
       <label style="display:flex; gap:10px; align-items:center;">
         <input type="checkbox" id="avoidImagePrefix" style="width:auto; margin:0;" />
-        Evitar “imagen/foto de...” al inicio del ALT
+        Evitar "imagen/foto de..." al inicio del ALT
       </label>
       <div class="help">Recomendado para accesibilidad y SEO. Si lo desactivas, no se eliminarán esos prefijos.</div>
     </div>
@@ -190,6 +191,12 @@
       <div class="help">Desactivado por defecto. Variables: <b>{{caption}}</b>, <b>{{alt}}</b>, <b>{{filename}}</b>, <b>{{site}}</b>, <b>{{date}}</b>.</div>
       <textarea id="captionTemplate" rows="3" placeholder="{{caption}}"></textarea>
     </div>
+    <div class="field" style="margin-top:10px;">
+      <label for="captionSignatureText">Texto de firma para leyenda (opción con firma)</label>
+      <input id="captionSignatureText" type="text" placeholder="Ej: Foto: @tuusuario" />
+      <div class="help">Se añade al final de la leyenda solo cuando usas la opción "Analizar y rellenar con firma" del menú contextual.</div>
+    </div>
+
 
     <div class="field" style="margin-top:10px;">
       <label style="display:flex; gap:10px; align-items:center;">
@@ -276,7 +283,7 @@
         <b>maca</b> funciona de forma local en tu navegador. No usamos analítica ni tracking.
       </p>
       <ul>
-        <li><b>API key:</b> se guarda en tu navegador. Si activas “Sincronizar API key con Google (Chrome)”, se guardará en <code>chrome.storage.sync</code> y se sincronizará con tu perfil de Chrome.</li>
+        <li><b>API key:</b> se guarda en tu navegador. Si activas "Sincronizar API key con Google (Chrome)", se guardará en <code>chrome.storage.sync</code> y se sincronizará con tu perfil de Chrome.</li>
         <li><b>Imágenes:</b> para generar el ALT/leyenda, la imagen (o una versión reducida) se envía al proveedor que elijas (OpenAI/Gemini o tu endpoint local). No se envían cookies ni credenciales.</li>
         <li><b>Historial:</b> se guarda en tu dispositivo (y puedes desactivarlo o vaciarlo cuando quieras).</li>
         <li><b>Modo debug:</b> guarda eventos recientes para diagnóstico y nunca incluye tu API key.</li>

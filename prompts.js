@@ -6,7 +6,11 @@ Describe la imagen de forma clara y natural.
 ALT:
 - Máx. 125 caracteres
 - Descriptivo y útil
-- No empieces con “imagen de” o “foto de”
+- No empieces con "imagen de" o "foto de"
+
+TITLE:
+- Muy breve (2-8 palabras)
+- Claro y natural
 
 LEYENDA:
 - 1 frase breve
@@ -15,7 +19,7 @@ LEYENDA:
 
 Idioma: {{LANG}}
 Devuelve SOLO JSON válido con:
-{"alt":"...","leyenda":"...","decorativa":false}
+{"alt":"...","title":"...","leyenda":"...","decorativa":false}
 `.trim(),
 
   product: `
@@ -27,6 +31,10 @@ ALT:
 - Incluye modelo o tipo si es visible
 - Máx. 125 caracteres
 
+TITLE:
+- Muy breve (2-8 palabras)
+- Tipo de producto y rasgo principal
+
 LEYENDA:
 - 1 frase
 - Enfoque comercial
@@ -34,7 +42,7 @@ LEYENDA:
 
 Idioma: {{LANG}}
 Devuelve SOLO JSON válido con:
-{"alt":"...","leyenda":"...","decorativa":false}
+{"alt":"...","title":"...","leyenda":"...","decorativa":false}
 `.trim(),
 
   person: `
@@ -46,12 +54,15 @@ ALT:
 - No asumas identidad, profesión o emociones
 - Máx. 125 caracteres
 
+TITLE:
+- Muy breve y neutral
+
 LEYENDA:
 - 1 frase contextual
 
 Idioma: {{LANG}}
 Devuelve SOLO JSON válido con:
-{"alt":"...","leyenda":"...","decorativa":false}
+{"alt":"...","title":"...","leyenda":"...","decorativa":false}
 `.trim(),
 
   graphic: `
@@ -63,12 +74,15 @@ ALT:
 - Enfoque informativo
 - Máx. 125 caracteres
 
+TITLE:
+- Muy breve, descriptivo
+
 LEYENDA:
 - 1 frase explicativa
 
 Idioma: {{LANG}}
 Devuelve SOLO JSON válido con:
-{"alt":"...","leyenda":"...","decorativa":false}
+{"alt":"...","title":"...","leyenda":"...","decorativa":false}
 `.trim(),
 
   logo: `
@@ -80,12 +94,15 @@ ALT:
 - Tipo de logo
 - Máx. 125 caracteres
 
+TITLE:
+- Nombre de marca o tipo de logo (breve)
+
 LEYENDA:
 - 1 frase breve de contexto
 
 Idioma: {{LANG}}
 Devuelve SOLO JSON válido con:
-{"alt":"...","leyenda":"...","decorativa":false}
+{"alt":"...","title":"...","leyenda":"...","decorativa":false}
 `.trim()
 };
 

@@ -74,6 +74,13 @@ function renderItem(item) {
   altV.className = 'v';
   altV.textContent = item.alt || '';
 
+  const titleK = document.createElement('div');
+  titleK.className = 'k';
+  titleK.textContent = 'Title';
+  const titleV = document.createElement('div');
+  titleV.className = 'v';
+  titleV.textContent = item.title || '';
+
   const capK = document.createElement('div');
   capK.className = 'k';
   capK.textContent = 'Leyenda';
@@ -99,8 +106,13 @@ function renderItem(item) {
   bBoth.textContent = 'Copiar ambos';
   bBoth.addEventListener('click', async () => {
     const a = (item.alt || '').trim();
+    const t = (item.title || '').trim();
     const c = (item.leyenda || '').trim();
-    await copyText(a && c ? `ALT: ${a}\n\nLeyenda: ${c}` : (a || c));
+    const parts = [];
+    if (a) parts.push(`ALT: ${a}`);
+    if (t) parts.push(`Title: ${t}`);
+    if (c) parts.push(`Leyenda: ${c}`);
+    await copyText(parts.join('\n\n') || (a || t || c));
   });
 
   row.appendChild(bAlt);
@@ -110,6 +122,8 @@ function renderItem(item) {
   card.appendChild(meta);
   card.appendChild(altK);
   card.appendChild(altV);
+  card.appendChild(titleK);
+  card.appendChild(titleV);
   card.appendChild(capK);
   card.appendChild(capV);
   card.appendChild(row);
@@ -121,7 +135,7 @@ function applyFilter(items, q) {
   const s = String(q || '').trim().toLowerCase();
   if (!s) return items;
   return items.filter(it => {
-    const hay = `${it.alt || ''}\n${it.leyenda || ''}\n${it.site || ''}`.toLowerCase();
+    const hay = `${it.alt || ''}\n${it.title || ''}\n${it.leyenda || ''}\n${it.site || ''}`.toLowerCase();
     return hay.includes(s);
   });
 }

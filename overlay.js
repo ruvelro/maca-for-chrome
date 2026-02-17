@@ -29,6 +29,7 @@
     imgEl: null,
     statusBox: null,
     altArea: null,
+    titleArea: null,
     capArea: null
   };
 
@@ -38,6 +39,7 @@
     pageUrl: "",
 	    generateMode: "both", // both | alt | caption
     alt: "",
+    title: "",
     leyenda: "",
     wpAutoApply: false,
     wpAutoApplyRequireMedia: true,
@@ -335,6 +337,7 @@
     UI.imgEl = null;
     UI.statusBox = null;
     UI.altArea = null;
+    UI.titleArea = null;
     UI.capArea = null;
     STATE.firstPaintDone = false;
   }
@@ -365,9 +368,11 @@
 
     const mode = String(STATE.generateMode || "both");
     const wantAlt = mode !== "caption";
+    const wantTitle = mode !== "caption";
     const wantCap = mode !== "alt";
     const payload = {};
     if (wantAlt) payload.alt = (STATE.alt || "");
+    if (wantTitle) payload.title = (STATE.title || STATE.alt || "");
     if (wantCap) payload.leyenda = (STATE.leyenda || "");
 
     const maxAttempts = 40;
@@ -385,8 +390,9 @@
 
         const res = applyToWordPressFields(payload);
         const okAlt = !wantAlt || !!res?.alt;
+        const okTitle = !wantTitle || !!res?.title;
         const okCap = !wantCap || !!res?.leyenda;
-        if ((okAlt && okCap) || STATE.autoApplyAttempts >= maxAttempts) return;
+        if ((okAlt && okTitle && okCap) || STATE.autoApplyAttempts >= maxAttempts) return;
 
         STATE.autoApplyTimer = setTimeout(attempt, delayMs);
       } catch (_) {
@@ -406,6 +412,7 @@
     STATE.imgUrl = "";
     STATE.pageUrl = "";
     STATE.alt = "";
+    STATE.title = "";
     STATE.leyenda = "";
     STATE.status = "idle";
     STATE.error = "";
@@ -489,6 +496,25 @@
       'input[aria-label="Caption"]',
       'textarea[name="attachment[caption]"]',
       'input[name="attachment[caption]"]'
+    ].join(','),
+    title: [
+      '.media-modal .attachment-details .setting[data-setting="title"] textarea',
+      '.media-modal .attachment-details .setting[data-setting="title"] input',
+      '.media-modal [data-setting="title"] textarea',
+      '.media-modal [data-setting="title"] input',
+      '.attachment-details .setting[data-setting="title"] textarea',
+      '.attachment-details .setting[data-setting="title"] input',
+      '.attachment-details [data-setting="title"] textarea',
+      '.attachment-details [data-setting="title"] input',
+      '#attachment_title',
+      'textarea.attachment-title',
+      'input.attachment-title',
+      'textarea[aria-label="Título"]',
+      'input[aria-label="Título"]',
+      'textarea[aria-label="Title"]',
+      'input[aria-label="Title"]',
+      'input[name="attachment[title]"]',
+      'textarea[name="attachment[title]"]'
     ].join(',')
   };
 
@@ -565,6 +591,10 @@
   function getCaptionField() {
     return pickBestField(WP_SELECTORS.caption) || findFieldNearLabel(["leyenda", "caption", "descripción", "descripcion"]);
   }
+
+  function getTitleField() {
+    return pickBestField(WP_SELECTORS.title) || findFieldNearLabel(["título", "titulo", "title"]);
+  }
 function isMediaModalOpen() {
     const modal = document.querySelector(".media-modal");
     if (!modal) return false;
@@ -607,11 +637,14 @@ function isMediaModalOpen() {
     }
   }
 
-  function applyToWordPressFields({ alt, leyenda }) {
-    const res = { alt: false, leyenda: false };
+  function applyToWordPressFields({ alt, title, leyenda }) {
+    const res = { alt: false, title: false, leyenda: false };
     try {
       const altEl = getAltField();
       if (altEl && typeof alt === "string") res.alt = setFormValue(altEl, alt);
+
+      const titleEl = getTitleField();
+      if (titleEl && typeof title === "string") res.title = setFormValue(titleEl, title);
 
       const capEl = getCaptionField();
       if (capEl && typeof leyenda === "string") res.leyenda = setFormValue(capEl, leyenda);
@@ -619,7 +652,7 @@ function isMediaModalOpen() {
       if (UI.statusBox) {
         const txt = UI.statusBox.querySelector(".status-text");
         if (txt) {
-          if (res.alt || res.leyenda) {
+          if (res.alt || res.title || res.leyenda) {
             txt.textContent = "Pegado en WordPress.";
           }
         }
@@ -645,8 +678,9 @@ async function copyText(text, btn, label) {
 
   function getCurrentOverlayTexts() {
     const alt = UI.altArea ? String(UI.altArea.value || "") : String(STATE.alt || "");
+    const title = UI.titleArea ? String(UI.titleArea.value || "") : String(STATE.title || "");
     const leyenda = UI.capArea ? String(UI.capArea.value || "") : String(STATE.leyenda || "");
-    return { alt, leyenda };
+    return { alt, title, leyenda };
   }
 
 
@@ -808,10 +842,13 @@ Leyenda: ${c}`);
             </div>
             <label for="maca-alt" id="maca-alt-label">ALT</label>
             <textarea id="maca-alt" placeholder="Generando..." disabled></textarea>
+            <label for="maca-title" id="maca-title-label">Title</label>
+            <textarea id="maca-title" placeholder="Generando..." disabled></textarea>
             <label for="maca-cap" id="maca-cap-label">Leyenda</label>
             <textarea id="maca-cap" placeholder="Generando..." disabled></textarea>
             <div class="actions copy-actions">
               <button id="maca-copy-alt">Copiar ALT</button>
+              <button id="maca-copy-title">Copiar title</button>
               <button id="maca-copy-cap">Copiar leyenda</button>
               <button id="maca-copy-both" class="primary">Copiar ambos</button>
             </div>
@@ -826,6 +863,7 @@ Leyenda: ${c}`);
     UI.imgEl = overlay.querySelector("#maca-img");
     UI.statusBox = overlay.querySelector("#maca-status");
     UI.altArea = overlay.querySelector("#maca-alt");
+    UI.titleArea = overlay.querySelector("#maca-title");
     UI.capArea = overlay.querySelector("#maca-cap");
     UI.batchBtn = overlay.querySelector("#maca-batch");
     UI.altArea?.addEventListener("input", () => {
@@ -833,6 +871,9 @@ Leyenda: ${c}`);
     });
     UI.capArea?.addEventListener("input", () => {
       if (STATE.status === "ready") STATE.leyenda = String(UI.capArea?.value || "");
+    });
+    UI.titleArea?.addEventListener("input", () => {
+      if (STATE.status === "ready") STATE.title = String(UI.titleArea?.value || "");
     });
 
     // Ensure correct initial visibility/state for batch button
@@ -899,17 +940,25 @@ Leyenda: ${c}`);
 	          pageUrl: STATE.pageUrl
 	        });
 	        if (res?.error) throw new Error(res.error);
-	        handleResult({ jobId: STATE.jobId, alt: res?.alt || "", leyenda: res?.leyenda || "" });
+	        handleResult({ jobId: STATE.jobId, alt: res?.alt || "", title: res?.title || "", leyenda: res?.leyenda || "" });
 	      } catch (err) {
 	        handleError({ jobId: STATE.jobId, error: err?.message || String(err) });
 	      }
 	    });
 
     overlay.querySelector("#maca-copy-alt").addEventListener("click", (e) => {
-      const { alt } = getCurrentOverlayTexts();
+      const { alt, title } = getCurrentOverlayTexts();
       STATE.alt = alt;
+      STATE.title = title || alt;
       copyText(alt, e.currentTarget, "Copiar ALT");
-      applyToWordPressFields({ alt });
+      applyToWordPressFields({ alt, title: STATE.title });
+    });
+    overlay.querySelector("#maca-copy-title").addEventListener("click", (e) => {
+      const { title, alt } = getCurrentOverlayTexts();
+      const finalTitle = title || alt || "";
+      STATE.title = finalTitle;
+      copyText(finalTitle, e.currentTarget, "Copiar title");
+      applyToWordPressFields({ title: finalTitle });
     });
     overlay.querySelector("#maca-copy-cap").addEventListener("click", (e) => {
       const { leyenda } = getCurrentOverlayTexts();
@@ -918,11 +967,12 @@ Leyenda: ${c}`);
       applyToWordPressFields({ leyenda });
     });
     overlay.querySelector("#maca-copy-both").addEventListener("click", (e) => {
-      const { alt, leyenda } = getCurrentOverlayTexts();
+      const { alt, title, leyenda } = getCurrentOverlayTexts();
       STATE.alt = alt;
+      STATE.title = title || alt;
       STATE.leyenda = leyenda;
       copyBothAsTwoEntries(alt, leyenda, e.currentTarget, "Copiar ambos");
-      applyToWordPressFields({ alt, leyenda });
+      applyToWordPressFields({ alt, title: STATE.title, leyenda });
     });
 
     updateUI();
@@ -950,6 +1000,7 @@ Leyenda: ${c}`);
 
 	      const mode = String(STATE.generateMode || "both");
 	      const showAlt = mode !== "caption";
+	      const showTitle = mode !== "caption";
 	      const showCap = mode !== "alt";
 
 	      if (UI.statusBox) {
@@ -957,7 +1008,7 @@ Leyenda: ${c}`);
         UI.statusBox.classList.toggle("ready", isReady);
 
 	        if (isLoading) {
-	          textEl.textContent = mode === "alt" ? "Generando ALT..." : (mode === "caption" ? "Generando leyenda..." : "Generando ALT y leyenda...");
+	          textEl.textContent = mode === "alt" ? "Generando ALT y title..." : (mode === "caption" ? "Generando leyenda..." : "Generando ALT, title y leyenda...");
 	        }
         else if (isReady) textEl.textContent = "Listo. Puedes copiar los textos.";
         else if (isError) textEl.textContent = `Error: ${STATE.error || "desconocido"}`;
@@ -966,8 +1017,10 @@ Leyenda: ${c}`);
 
 	      // Toggle fields based on mode
 	      const altLabel = UI.overlay.querySelector("#maca-alt-label");
+	      const titleLabel = UI.overlay.querySelector("#maca-title-label");
 	      const capLabel = UI.overlay.querySelector("#maca-cap-label");
 	      if (altLabel) altLabel.style.display = showAlt ? "" : "none";
+	      if (titleLabel) titleLabel.style.display = showTitle ? "" : "none";
 	      if (capLabel) capLabel.style.display = showCap ? "" : "none";
 
 	      if (UI.altArea) {
@@ -984,16 +1037,25 @@ Leyenda: ${c}`);
 	        UI.capArea.style.display = showCap ? "" : "none";
       }
 
+	      if (UI.titleArea) {
+        UI.titleArea.disabled = !isReady;
+        UI.titleArea.value = isReady ? (STATE.title || "") : "";
+        UI.titleArea.classList.toggle("ready", isReady);
+	        UI.titleArea.style.display = showTitle ? "" : "none";
+      }
+
 	      const btnAlt = UI.overlay.querySelector("#maca-copy-alt");
+	      const btnTitle = UI.overlay.querySelector("#maca-copy-title");
 	      const btnCap = UI.overlay.querySelector("#maca-copy-cap");
 	      const btnBoth = UI.overlay.querySelector("#maca-copy-both");
 	      const btnRegen = UI.overlay.querySelector("#maca-regenerate");
 	      if (btnRegen) btnRegen.disabled = isLoading;
 	      if (btnAlt) btnAlt.style.display = showAlt ? "" : "none";
+	      if (btnTitle) btnTitle.style.display = showTitle ? "" : "none";
 	      if (btnCap) btnCap.style.display = showCap ? "" : "none";
 	      if (btnBoth) btnBoth.style.display = (showAlt && showCap) ? "" : "none";
 
-	      [btnAlt, btnCap, btnBoth].forEach((b) => {
+	      [btnAlt, btnTitle, btnCap, btnBoth].forEach((b) => {
 	        if (!b) return;
 	        if (b.dataset.macaFeedback === "1") return;
 	        b.disabled = !isReady;
@@ -1030,9 +1092,10 @@ Leyenda: ${c}`);
       return;
     }
 
-    const { alt, leyenda } = STATE.pendingResult;
+    const { alt, title, leyenda } = STATE.pendingResult;
     STATE.pendingResult = null;
     STATE.alt = alt || "";
+    STATE.title = title || alt || "";
     STATE.leyenda = leyenda || "";
     STATE.status = "ready";
     STATE.error = "";
@@ -1076,6 +1139,7 @@ Leyenda: ${c}`);
     STATE.wpAutoApplyRequireMedia = (wpAutoApplyRequireMedia !== undefined) ? !!wpAutoApplyRequireMedia : true;
     STATE.onCompleteAction = String(onCompleteAction || "none");
     STATE.alt = "";
+    STATE.title = "";
     STATE.leyenda = "";
     STATE.status = "loading";
     STATE.error = "";
@@ -1087,10 +1151,10 @@ Leyenda: ${c}`);
     showOverlay();
   }
 
-  function handleResult({ jobId, alt, leyenda }) {
+  function handleResult({ jobId, alt, title, leyenda }) {
     if (STATE.jobId && jobId && jobId !== STATE.jobId) return;
 
-    STATE.pendingResult = { alt, leyenda };
+    STATE.pendingResult = { alt, title, leyenda };
     tryApplyPendingResult();
   }
 

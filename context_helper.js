@@ -269,7 +269,34 @@
     return null;
   }
 
-  async function applyToAttachment({ attachmentId, alt, leyenda, generateMode, requireMedia }) {
+  function getTitleFieldForAttachment(id) {
+    const scope = document.querySelector(".media-modal") || document.querySelector(".media-frame") || document;
+    const details =
+      scope.querySelector(".attachment-details") ||
+      document.querySelector(".attachment-details");
+    const selectors = [
+      "#attachment_title",
+      "input.attachment-title",
+      "textarea.attachment-title",
+      `.setting[data-setting="title"] input`,
+      `.setting[data-setting="title"] textarea`,
+      `input[name="attachments[${id}][title]"]`,
+      `textarea[name="attachments[${id}][title]"]`,
+      'input[aria-label="Título"]',
+      'textarea[aria-label="Título"]',
+      'input[aria-label="Title"]',
+      'textarea[aria-label="Title"]'
+    ];
+    for (const sel of selectors) {
+      try {
+        const el = (details || scope).querySelector(sel);
+        if (el) return el;
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  async function applyToAttachment({ attachmentId, alt, title, leyenda, generateMode, requireMedia }) {
     const id = String(attachmentId || "");
     if (!id) return { ok: false, error: "ID de adjunto inválido." };
 
@@ -285,16 +312,19 @@
     const start = Date.now();
     while (Date.now() - start < 2000) {
       const altEl = getAltFieldForAttachment(id);
+      const titleEl = getTitleFieldForAttachment(id);
       const capEl = getCaptionFieldForAttachment(id);
-      if (altEl || capEl) break;
+      if (altEl || titleEl || capEl) break;
       await new Promise(r => setTimeout(r, 80));
     }
 
-    const res = { alt: false, leyenda: false };
+    const res = { alt: false, title: false, leyenda: false };
     const mode = String(generateMode || "both");
     if (mode === "both" || mode === "alt") {
       const altEl = getAltFieldForAttachment(id);
       if (altEl) res.alt = setFormValue(altEl, String(alt || ""));
+      const titleEl = getTitleFieldForAttachment(id);
+      if (titleEl) res.title = setFormValue(titleEl, String(title || alt || ""));
     }
     if (mode === "both" || mode === "caption") {
       const capEl = getCaptionFieldForAttachment(id);
@@ -405,8 +435,9 @@
       const thumb = el.querySelector(".thumbnail") || el.querySelector("img") || el;
       const cand = findCandidate(thumb) || findCandidate(el);
       if (!cand || !cand.imageUrl) continue;
-      if (seen.has(cand.imageUrl)) continue;
-      seen.add(cand.imageUrl);
+      const dedupeKey = id || cand.imageUrl;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
       items.push({
         id,
         imageUrl: cand.imageUrl,
@@ -451,6 +482,7 @@
         const res = await applyToAttachment({
           attachmentId: msg.attachmentId,
           alt: msg.alt,
+          title: msg.title,
           leyenda: msg.leyenda,
           generateMode: msg.generateMode,
           requireMedia: msg.requireMedia

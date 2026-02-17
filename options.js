@@ -30,6 +30,7 @@ const els = {
   allowDecorativeAltEmpty: document.getElementById("allowDecorativeAltEmpty"),
   captionTemplateEnabled: document.getElementById("captionTemplateEnabled"),
   captionTemplate: document.getElementById("captionTemplate"),
+  captionSignatureText: document.getElementById("captionSignatureText"),
   debugEnabled: document.getElementById("debugEnabled"),
   copyDebug: document.getElementById("copyDebug"),
   clearDebug: document.getElementById("clearDebug"),
@@ -137,6 +138,12 @@ const PROVIDERS = {
       "gemini-2.5-flash",
       "gemini-2.5-flash-lite"
     ]
+  },
+  openrouter: {
+    defaultModel: "z-ai/glm-4.6v",
+    models: [
+      "z-ai/glm-4.6v"
+    ]
   }
 };
 
@@ -181,6 +188,10 @@ function applyProviderUi(provider, cfg = {}) {
         els.apiKeyHelp.textContent =
           "Solo si tu servidor local requiere autenticación (normalmente se deja vacío).";
       if (els.apiKey) els.apiKey.placeholder = "(opcional)";
+    } else if (provider === "openrouter") {
+      if (els.apiKeyLabel) els.apiKeyLabel.textContent = "API key (OpenRouter)";
+      if (els.apiKeyHelp) els.apiKeyHelp.textContent = "Usa una API key de OpenRouter.";
+      if (els.apiKey) els.apiKey.placeholder = "Pega aquí tu API key de OpenRouter";
     } else {
       if (els.apiKeyLabel) els.apiKeyLabel.textContent = "API key";
       if (els.apiKey) els.apiKey.placeholder = "Pega aquí tu API key";
@@ -236,6 +247,10 @@ function updateApiKeyHelpText() {
     els.apiKeyHelp.textContent = "";
     return;
   }
+  if (provider === "openrouter") {
+    els.apiKeyHelp.textContent = "API key de OpenRouter. Puedes sincronizarla con Chrome si quieres.";
+    return;
+  }
   const syncOn = !!els.syncApiKey?.checked;
   els.apiKeyHelp.textContent = syncOn
     ? "La clave se sincroniza con tu cuenta de Chrome."
@@ -271,6 +286,7 @@ function getEffectiveModel(provider) {
     allowDecorativeAltEmpty: false,
     captionTemplateEnabled: false,
     captionTemplate: "{{caption}}",
+    captionSignatureText: "",
     debugEnabled: false,
     syncApiKey: false,
     apiKey: ""
@@ -292,6 +308,7 @@ function getEffectiveModel(provider) {
     if (els.allowDecorativeAltEmpty) els.allowDecorativeAltEmpty.checked = !!cfg.allowDecorativeAltEmpty;
     if (els.captionTemplateEnabled) els.captionTemplateEnabled.checked = !!cfg.captionTemplateEnabled;
     if (els.captionTemplate) els.captionTemplate.value = String(cfg.captionTemplate || "{{caption}}");
+    if (els.captionSignatureText) els.captionSignatureText.value = String(cfg.captionSignatureText || "");
     if (els.debugEnabled) els.debugEnabled.checked = !!cfg.debugEnabled;
     if (els.syncApiKey) els.syncApiKey.checked = !!cfg.syncApiKey;
 
@@ -412,6 +429,7 @@ els.save.addEventListener("click", async () => {
     allowDecorativeAltEmpty: !!els.allowDecorativeAltEmpty?.checked,
     captionTemplateEnabled: !!els.captionTemplateEnabled?.checked,
     captionTemplate: (els.captionTemplate?.value || "{{caption}}").trim() || "{{caption}}",
+    captionSignatureText: (els.captionSignatureText?.value || "").trim(),
     debugEnabled: !!els.debugEnabled?.checked,
     syncApiKey,
     generateMode: String(els.generateMode?.value || "both"),
