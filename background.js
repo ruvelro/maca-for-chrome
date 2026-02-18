@@ -1896,6 +1896,7 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
       const attachmentId = String(msg?.attachmentId || "");
       const imageUrl = String(msg?.imageUrl || "");
       const filenameContext = String(msg?.filenameContext || "");
+      const trigger = String(msg?.trigger || "upload");
       let markedSeen = false;
       try {
         if (tabId == null) throw new Error("No hay pestaña activa.");
@@ -1909,6 +1910,13 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
         if (!cfg?.wpAutoAnalyzeOnUpload) {
           sendResponse({ ok: false, skipped: true, reason: "disabled" });
           return;
+        }
+        if (trigger !== "upload") {
+          // Selection-based auto-run is optional and separate.
+          if (!cfg?.autoAnalyzeOnSelectMedia) {
+            sendResponse({ ok: false, skipped: true, reason: "not_upload_trigger" });
+            return;
+          }
         }
         const st = getAutoUploadStats(tabId);
         if (__autoUploadCancelByTab.get(tabId) === true) {
@@ -1929,6 +1937,29 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
         const fuseMax = Number.isFinite(Number(cfg.autoUploadSafetyFuseMaxQueued))
           ? Math.max(5, Number(cfg.autoUploadSafetyFuseMaxQueued))
           : 24;
+        const hardEmergencyMax = 80;
+        if (Number(st.queued || 0) >= hardEmergencyMax) {
+          __autoUploadCancelByTab.set(tabId, true);
+          __autoUploadPausedByTab.delete(tabId);
+          __autoUploadPendingIdsByTab.delete(tabId);
+          await sendAutoUploadProgress(tabId, {
+            phase: "safety_stop",
+            attachmentId,
+            queued: st.queued,
+            done: st.done,
+            ok: st.ok,
+            error: st.error,
+            fuseMax: hardEmergencyMax
+          });
+          await addDebugLog(cfg, "auto_upload_hard_safety_stop", {
+            tabId,
+            attachmentId,
+            queued: st.queued,
+            hardEmergencyMax
+          });
+          sendResponse({ ok: false, skipped: true, reason: "hard_safety_fuse", fuseMax: hardEmergencyMax });
+          return;
+        }
         if (fuseEnabled && Number(st.queued || 0) >= fuseMax) {
           __autoUploadCancelByTab.set(tabId, true);
           __autoUploadPausedByTab.delete(tabId);

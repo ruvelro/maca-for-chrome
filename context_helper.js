@@ -11,6 +11,7 @@
     uploadSignalWindowMs: 45000,
     uploadSessionStartAt: 0,
     lastUploadingSignalAt: 0,
+    pendingExpected: 0,
     byId: new Map()
   };
   const AUTO_UPLOAD_SETTINGS = {
@@ -60,6 +61,14 @@
     if (window.__macaUploadSignalHooksInstalled) return;
     window.__macaUploadSignalHooksInstalled = true;
 
+    function noteExpectedFiles(n) {
+      const k = Number(n || 0);
+      if (!Number.isFinite(k) || k <= 0) return;
+      // Hard cap to avoid runaway states.
+      AUTO_UPLOAD.pendingExpected = Math.min(500, Number(AUTO_UPLOAD.pendingExpected || 0) + k);
+      markUploadSignal();
+    }
+
     const fileChangeListener = (ev) => {
       try {
         const t = ev?.target;
@@ -68,7 +77,7 @@
         if (type !== "file") return;
         if (!isInsideWpMediaUploader(t)) return;
         const filesLen = Number(t.files?.length || 0);
-        if (filesLen > 0) markUploadSignal();
+        if (filesLen > 0) noteExpectedFiles(filesLen);
       } catch (_) {}
     };
 
@@ -76,7 +85,7 @@
       try {
         if (!isInsideWpMediaUploader(ev?.target)) return;
         const filesLen = Number(ev?.dataTransfer?.files?.length || 0);
-        if (filesLen > 0) markUploadSignal();
+        if (filesLen > 0) noteExpectedFiles(filesLen);
       } catch (_) {}
     };
 
@@ -85,22 +94,7 @@
         if (!isInsideWpMediaUploader(ev?.target)) return;
         const items = Array.from(ev?.clipboardData?.items || []);
         const hasFile = items.some((it) => String(it?.kind || "").toLowerCase() === "file");
-        if (hasFile) markUploadSignal();
-      } catch (_) {}
-    };
-
-    const clickListener = (ev) => {
-      try {
-        const tab = ev?.target?.closest?.(".media-menu-item, .media-router a, .media-frame-router .media-menu-item");
-        if (tab) {
-          const txt = String(tab.textContent || "").trim().toLowerCase();
-          if (txt.includes("subir") || txt.includes("upload")) {
-            markUploadSignal();
-            return;
-          }
-        }
-        const btn = ev?.target?.closest?.(".upload-ui .browser, .media-upload-form .upload-button, .uploader-inline .browser");
-        if (btn) markUploadSignal();
+        if (hasFile) noteExpectedFiles(items.length || 1);
       } catch (_) {}
     };
 
@@ -108,7 +102,6 @@
     document.addEventListener("change", fileChangeListener, true);
     document.addEventListener("drop", dropListener, true);
     document.addEventListener("paste", pasteListener, true);
-    document.addEventListener("click", clickListener, true);
   }
 
   function nodeHasUploadSignal(node) {
@@ -132,12 +125,7 @@
       if (!seenAt) continue;
       const isRecent = (now - seenAt) <= windowMs;
       if (!isRecent) continue;
-      const inUploadSession = !!hasRecentUploadSignal() && Number(AUTO_UPLOAD.uploadSessionStartAt || 0) > 0;
-      const inferredBySession =
-        inUploadSession &&
-        !meta?.initialScan &&
-        seenAt >= (Number(AUTO_UPLOAD.uploadSessionStartAt || 0) - 1000);
-      if (!meta?.sawUploading && !inferredBySession) continue;
+      if (!meta?.sawUploading) continue;
       if (now - Number(meta.firstSeenAt || 0) <= windowMs) n++;
     }
     return n;
@@ -828,6 +816,11 @@
     if (!meta) {
       meta = { firstSeenAt: Date.now(), sawUploading: false, triggered: false, retries: 0, initialScan: !!initial };
       AUTO_UPLOAD.byId.set(id, meta);
+      if (!initial && Number(AUTO_UPLOAD.pendingExpected || 0) > 0) {
+        meta.sawUploading = true;
+        AUTO_UPLOAD.pendingExpected = Math.max(0, Number(AUTO_UPLOAD.pendingExpected || 0) - 1);
+        markUploadSignal();
+      }
     } else if (initial && meta.initialScan !== false) {
       meta.initialScan = true;
     }
@@ -847,10 +840,8 @@
 
       const selected = isSelectedAttachmentEl(el);
       const fromUpload = !!meta.sawUploading;
-      const looksLikeNewAfterBoot = !meta.initialScan && Number(meta.firstSeenAt || 0) > (AUTO_UPLOAD.startedAt + 3000);
       const isMultiUpload = countRecentUploadMarked() >= 2;
-      const inUploadSession = hasRecentUploadSignal() && Number(AUTO_UPLOAD.uploadSessionStartAt || 0) > 0;
-      const allowBatchUploadFlow = isMultiUpload && inUploadSession && (fromUpload || looksLikeNewAfterBoot);
+      const allowBatchUploadFlow = isMultiUpload && fromUpload;
       const userJustSelected = (Date.now() - LAST_USER_SELECT_AT) < 3000;
       const allowSelectFeature = AUTO_UPLOAD_SETTINGS.autoAnalyzeOnSelectMedia && selected && userJustSelected;
 
@@ -878,7 +869,8 @@
           attachmentId: id,
           imageUrl: c.imageUrl,
           filenameContext: c.filenameContext || "",
-          pageUrl: location.href
+          pageUrl: location.href,
+          trigger: allowSelectFeature ? "selection" : "upload"
         }, (res) => {
           const hadRuntimeError = !!chrome.runtime.lastError;
           const skipped = !!res?.skipped;
