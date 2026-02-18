@@ -46,6 +46,71 @@
     AUTO_UPLOAD.lastUploadingSignalAt = now;
   }
 
+  function isInsideWpMediaUploader(target) {
+    try {
+      const el = target && target.nodeType === 1 ? target : target?.parentElement;
+      if (!el) return false;
+      return !!el.closest?.(".media-modal, .media-frame, .upload-ui, .media-upload-form, .uploader-inline");
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function installUploadSignalHooks() {
+    if (window.__macaUploadSignalHooksInstalled) return;
+    window.__macaUploadSignalHooksInstalled = true;
+
+    const fileChangeListener = (ev) => {
+      try {
+        const t = ev?.target;
+        if (!t || String(t.tagName || "").toLowerCase() !== "input") return;
+        const type = String(t.type || "").toLowerCase();
+        if (type !== "file") return;
+        if (!isInsideWpMediaUploader(t)) return;
+        const filesLen = Number(t.files?.length || 0);
+        if (filesLen > 0) markUploadSignal();
+      } catch (_) {}
+    };
+
+    const dropListener = (ev) => {
+      try {
+        if (!isInsideWpMediaUploader(ev?.target)) return;
+        const filesLen = Number(ev?.dataTransfer?.files?.length || 0);
+        if (filesLen > 0) markUploadSignal();
+      } catch (_) {}
+    };
+
+    const pasteListener = (ev) => {
+      try {
+        if (!isInsideWpMediaUploader(ev?.target)) return;
+        const items = Array.from(ev?.clipboardData?.items || []);
+        const hasFile = items.some((it) => String(it?.kind || "").toLowerCase() === "file");
+        if (hasFile) markUploadSignal();
+      } catch (_) {}
+    };
+
+    const clickListener = (ev) => {
+      try {
+        const tab = ev?.target?.closest?.(".media-menu-item, .media-router a, .media-frame-router .media-menu-item");
+        if (tab) {
+          const txt = String(tab.textContent || "").trim().toLowerCase();
+          if (txt.includes("subir") || txt.includes("upload")) {
+            markUploadSignal();
+            return;
+          }
+        }
+        const btn = ev?.target?.closest?.(".upload-ui .browser, .media-upload-form .upload-button, .uploader-inline .browser");
+        if (btn) markUploadSignal();
+      } catch (_) {}
+    };
+
+    // Use capture to catch events even when WP stops propagation.
+    document.addEventListener("change", fileChangeListener, true);
+    document.addEventListener("drop", dropListener, true);
+    document.addEventListener("paste", pasteListener, true);
+    document.addEventListener("click", clickListener, true);
+  }
+
   function nodeHasUploadSignal(node) {
     try {
       if (!node || node.nodeType !== 1) return false;
@@ -857,6 +922,7 @@
 
       const root = document.querySelector(".attachments-browser") || document.body;
       if (!root) return;
+      installUploadSignalHooks();
 
       const scanAll = () => {
         try {
