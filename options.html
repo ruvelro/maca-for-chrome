@@ -158,6 +158,31 @@
         Opcional para subidas múltiples. Tras rellenar ALT, title y leyenda de una imagen, se desmarca para que veas de un vistazo cuáles faltan.
       </div>
     </div>
+    <div class="field" style="margin-top:10px;">
+      <label style="display:flex; gap:10px; align-items:center;">
+        <input type="checkbox" id="autoQueueModeVisible" style="width:auto; margin:0;" />
+        Modo cola visible en auto-subida
+      </label>
+      <div class="help">
+        Muestra en el panel flotante los IDs de adjuntos pendientes durante el procesamiento en lote automático.
+      </div>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <div class="field">
+        <label style="display:flex; gap:10px; align-items:center;">
+          <input type="checkbox" id="autoUploadSafetyFuseEnabled" style="width:auto; margin:0;" />
+          Activar fusible de seguridad en auto-subida
+        </label>
+        <div class="help">
+          Si se encolan demasiadas imágenes de golpe, se detiene automáticamente para evitar procesado masivo accidental.
+        </div>
+      </div>
+      <div class="field">
+        <label for="autoUploadSafetyFuseMaxQueued">Límite del fusible (cola máxima)</label>
+        <input id="autoUploadSafetyFuseMaxQueued" type="number" min="5" step="1" placeholder="24" />
+        <div class="help">Recomendado: entre 15 y 40.</div>
+      </div>
+    </div>
 
     
     <div class="field" style="margin-top:10px;">
@@ -211,6 +236,41 @@
         Permitir ALT vacío si la imagen es decorativa
       </label>
       <div class="help">Desactivado por defecto. La IA marcará <b>"decorativa": true</b> cuando corresponda y se permitirá ALT vacío solo en ese caso.</div>
+    </div>
+
+    <div class="field" style="margin-top:10px;">
+      <label style="display:flex; gap:10px; align-items:center;">
+        <input type="checkbox" id="postValidationEnabled" style="width:auto; margin:0;" />
+        Activar validación post-generación
+      </label>
+      <div class="help">Valida calidad mínima de ALT, title y leyenda antes de aplicar/copiar.</div>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <div class="field">
+        <label style="display:flex; gap:10px; align-items:center;">
+          <input type="checkbox" id="postValidationRejectGeneric" style="width:auto; margin:0;" />
+          Rechazar textos genéricos
+        </label>
+        <div class="help">Ejemplos: "imagen de", "foto de", "escena principal de la imagen".</div>
+      </div>
+      <div class="field">
+        <label for="postValidationTitleMinWords">Title: mínimo de palabras</label>
+        <input id="postValidationTitleMinWords" type="number" min="1" step="1" placeholder="2" />
+      </div>
+      <div class="field">
+        <label for="postValidationTitleMaxWords">Title: máximo de palabras</label>
+        <input id="postValidationTitleMaxWords" type="number" min="1" step="1" placeholder="8" />
+      </div>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <div class="field">
+        <label for="postValidationAltMinChars">ALT: mínimo de caracteres</label>
+        <input id="postValidationAltMinChars" type="number" min="0" step="1" placeholder="0" />
+      </div>
+      <div class="field">
+        <label for="postValidationCaptionMinChars">Leyenda: mínimo de caracteres</label>
+        <input id="postValidationCaptionMinChars" type="number" min="0" step="1" placeholder="0" />
+      </div>
     </div>
 
     <div class="field" style="margin-top:10px;">
@@ -302,7 +362,10 @@
     <button id="copyDebug" class="secondary">Copiar diagnóstico</button>
     <button id="copySupport" class="secondary">Copiar soporte (diagnóstico + config)</button>
     <button id="clearDebug" class="secondary">Borrar diagnóstico</button>
+    <button id="copyMetrics" class="secondary">Copiar métricas</button>
+    <button id="clearMetrics" class="secondary">Borrar métricas</button>
     <div class="help" style="margin-top:10px;">La prueba hace una petición mínima para validar tu API key / endpoint y el modelo seleccionado.</div>
+    <pre id="metricsSummary" style="margin-top:10px; max-height:220px; overflow:auto; background:#f8fafc; border:1px solid #e5e7eb; padding:10px; border-radius:8px;"></pre>
   </div>
 
   <!-- ACCIONES -->

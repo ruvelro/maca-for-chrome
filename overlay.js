@@ -30,7 +30,11 @@
     statusBox: null,
     altArea: null,
     titleArea: null,
-    capArea: null
+    capArea: null,
+    batchBtn: null,
+    batchCancelBtn: null,
+    autoUploadPauseBtn: null,
+    autoUploadCancelBtn: null
   };
 
   const STATE = {
@@ -49,9 +53,14 @@
     loadingSince: 0,
     firstPaintDone: false,
     pendingResult: null,
-	    autoApplyAttempts: 0,
-	    autoApplyTimer: null,
-    applyTimer: null
+    autoApplyAttempts: 0,
+    autoApplyTimer: null,
+    applyTimer: null,
+    batchRunning: false,
+    batchCancelling: false,
+    autoUploadRunning: false,
+    autoUploadCancelling: false,
+    autoUploadPaused: false
   };
 
   function injectStyles() {
@@ -418,6 +427,11 @@
     STATE.error = "";
     STATE.loadingSince = 0;
     STATE.pendingResult = null;
+    STATE.batchRunning = false;
+    STATE.batchCancelling = false;
+    STATE.autoUploadRunning = false;
+    STATE.autoUploadCancelling = false;
+    STATE.autoUploadPaused = false;
     removeOverlay();
     removeMini();
   }
@@ -720,6 +734,12 @@ function getWpSelectedCount() {
 
 function updateBatchButtonUi() {
   if (!UI.batchBtn) return;
+  if (STATE.batchRunning) {
+    UI.batchBtn.style.display = "";
+    UI.batchBtn.disabled = true;
+    UI.batchBtn.textContent = "Procesando lote...";
+    return;
+  }
   const n = getWpSelectedCount();
   const show = isWpAdminPage() && n > 1;
   UI.batchBtn.style.display = show ? "" : "none";
@@ -838,6 +858,9 @@ Leyenda: ${c}`);
             <div class="actions preview-actions">
               <button id="maca-regenerate" class="secondary">Regenerar</button>
               <button id="maca-batch" class="secondary">Procesar selección</button>
+              <button id="maca-batch-cancel" class="secondary" style="display:none;">Cancelar lote</button>
+              <button id="maca-auto-pause" class="secondary" style="display:none;">Pausar auto-subida</button>
+              <button id="maca-auto-cancel" class="secondary" style="display:none;">Cancelar auto-subida</button>
             </div>
           </div>
           <div class="content-col">
@@ -871,6 +894,9 @@ Leyenda: ${c}`);
     UI.titleArea = overlay.querySelector("#maca-title");
     UI.capArea = overlay.querySelector("#maca-cap");
     UI.batchBtn = overlay.querySelector("#maca-batch");
+    UI.batchCancelBtn = overlay.querySelector("#maca-batch-cancel");
+    UI.autoUploadPauseBtn = overlay.querySelector("#maca-auto-pause");
+    UI.autoUploadCancelBtn = overlay.querySelector("#maca-auto-cancel");
     UI.altArea?.addEventListener("input", () => {
       if (STATE.status === "ready") STATE.alt = String(UI.altArea?.value || "");
     });
@@ -894,10 +920,13 @@ Leyenda: ${c}`);
 
     // Batch process selected (WP media library)
     UI.batchBtn?.addEventListener("click", async () => {
+      if (STATE.batchRunning) return;
       updateBatchButtonUi();
       if (UI.batchBtn?.disabled) return;
 
       STATE.status = "loading";
+      STATE.batchRunning = true;
+      STATE.batchCancelling = false;
       STATE.error = "";
       STATE.loadingSince = Date.now();
       STATE.firstPaintDone = false;
@@ -915,6 +944,43 @@ Leyenda: ${c}`);
       } finally {
         updateBatchButtonUi();
       }
+    });
+
+    UI.batchCancelBtn?.addEventListener("click", async () => {
+      if (!STATE.batchRunning || STATE.batchCancelling) return;
+      STATE.batchCancelling = true;
+      if (UI.statusBox) {
+        const txt = UI.statusBox.querySelector(".status-text");
+        if (txt) txt.textContent = "Cancelando lote...";
+      }
+      updateUI();
+      try {
+        await chrome.runtime.sendMessage({ type: "MACA_BATCH_CANCEL" });
+      } catch (_) {}
+    });
+
+    UI.autoUploadPauseBtn?.addEventListener("click", async () => {
+      if (!STATE.autoUploadRunning || STATE.autoUploadCancelling) return;
+      try {
+        if (STATE.autoUploadPaused) {
+          await chrome.runtime.sendMessage({ type: "MACA_AUTO_UPLOAD_RESUME" });
+        } else {
+          await chrome.runtime.sendMessage({ type: "MACA_AUTO_UPLOAD_PAUSE" });
+        }
+      } catch (_) {}
+    });
+
+    UI.autoUploadCancelBtn?.addEventListener("click", async () => {
+      if (!STATE.autoUploadRunning || STATE.autoUploadCancelling) return;
+      STATE.autoUploadCancelling = true;
+      if (UI.statusBox) {
+        const txt = UI.statusBox.querySelector(".status-text");
+        if (txt) txt.textContent = "Cancelando auto-subida...";
+      }
+      updateUI();
+      try {
+        await chrome.runtime.sendMessage({ type: "MACA_AUTO_UPLOAD_CANCEL" });
+      } catch (_) {}
     });
 
 
@@ -1052,9 +1118,28 @@ Leyenda: ${c}`);
 	      const btnAlt = UI.overlay.querySelector("#maca-copy-alt");
 	      const btnTitle = UI.overlay.querySelector("#maca-copy-title");
 	      const btnCap = UI.overlay.querySelector("#maca-copy-cap");
-	      const btnBoth = UI.overlay.querySelector("#maca-copy-both");
-	      const btnRegen = UI.overlay.querySelector("#maca-regenerate");
+      const btnBoth = UI.overlay.querySelector("#maca-copy-both");
+      const btnRegen = UI.overlay.querySelector("#maca-regenerate");
+      const btnBatchCancel = UI.overlay.querySelector("#maca-batch-cancel");
+      const btnAutoPause = UI.overlay.querySelector("#maca-auto-pause");
+      const btnAutoCancel = UI.overlay.querySelector("#maca-auto-cancel");
 	      if (btnRegen) btnRegen.disabled = isLoading;
+      if (UI.batchBtn) UI.batchBtn.disabled = STATE.batchRunning || !isWpAdminPage() || getWpSelectedCount() <= 1;
+      if (btnBatchCancel) {
+        btnBatchCancel.style.display = STATE.batchRunning ? "" : "none";
+        btnBatchCancel.disabled = !STATE.batchRunning || STATE.batchCancelling;
+        btnBatchCancel.textContent = STATE.batchCancelling ? "Cancelando..." : "Cancelar lote";
+      }
+      if (btnAutoPause) {
+        btnAutoPause.style.display = (!STATE.batchRunning && STATE.autoUploadRunning) ? "" : "none";
+        btnAutoPause.disabled = !STATE.autoUploadRunning || STATE.autoUploadCancelling;
+        btnAutoPause.textContent = STATE.autoUploadPaused ? "Reanudar auto-subida" : "Pausar auto-subida";
+      }
+      if (btnAutoCancel) {
+        btnAutoCancel.style.display = (!STATE.batchRunning && STATE.autoUploadRunning) ? "" : "none";
+        btnAutoCancel.disabled = !STATE.autoUploadRunning || STATE.autoUploadCancelling;
+        btnAutoCancel.textContent = STATE.autoUploadCancelling ? "Cancelando..." : "Cancelar auto-subida";
+      }
 	      if (btnAlt) btnAlt.style.display = showAlt ? "" : "none";
 	      if (btnTitle) btnTitle.style.display = showTitle ? "" : "none";
 	      if (btnCap) btnCap.style.display = showCap ? "" : "none";
@@ -1172,6 +1257,8 @@ function handleProgress(msg) {
 
       if (phase === "start") {
         STATE.status = "loading";
+        STATE.batchRunning = true;
+        STATE.batchCancelling = false;
         STATE.error = "";
         updateUI();
         if (UI.statusBox) {
@@ -1184,6 +1271,8 @@ function handleProgress(msg) {
           if (txt) txt.textContent = `Procesando ${current}/${total}...`;
         }
       } else if (phase === "done") {
+        STATE.batchRunning = false;
+        STATE.batchCancelling = false;
         STATE.status = "ready";
         STATE.error = "";
         updateUI();
@@ -1192,18 +1281,71 @@ function handleProgress(msg) {
           if (txt) txt.textContent = `Selección procesada (${total}/${total}).`;
         }
         updateBatchButtonUi();
+      } else if (phase === "cancelled") {
+        STATE.batchRunning = false;
+        STATE.batchCancelling = false;
+        STATE.status = "ready";
+        STATE.error = "";
+        updateUI();
+        if (UI.statusBox) {
+          const txt = UI.statusBox.querySelector(".status-text");
+          if (txt) txt.textContent = `Lote cancelado (${current}/${total}).`;
+        }
+        updateBatchButtonUi();
       }
     } catch (_) {}
   }
 
-function handleError({ jobId, error }) {
+  function handleError({ jobId, error }) {
     if (STATE.jobId && jobId && jobId !== STATE.jobId) return;
     clearApplyTimer();
     STATE.pendingResult = null;
     STATE.status = "error";
+    STATE.batchRunning = false;
+    STATE.batchCancelling = false;
     STATE.error = error || "desconocido";
     updateUI();
     updateBatchButtonUi();
+  }
+
+  function handleAutoUploadProgress(msg) {
+    try {
+      const phase = String(msg?.phase || "");
+      const done = Number(msg?.done || 0);
+      const queued = Number(msg?.queued || 0);
+      const ok = Number(msg?.ok || 0);
+      const err = Number(msg?.error || 0);
+
+      if (phase === "queued" || phase === "processing" || phase === "done_item" || phase === "error_item") {
+        STATE.autoUploadRunning = true;
+        if (phase !== "cancel_request") STATE.autoUploadCancelling = false;
+      } else if (phase === "cancel_request") {
+        STATE.autoUploadRunning = true;
+        STATE.autoUploadCancelling = true;
+      } else if (phase === "paused") {
+        STATE.autoUploadRunning = true;
+      } else if (phase === "done_all" || phase === "cancelled" || phase === "safety_stop") {
+        STATE.autoUploadRunning = false;
+        STATE.autoUploadCancelling = false;
+        STATE.autoUploadPaused = false;
+      }
+      STATE.autoUploadPaused = !!msg?.paused;
+
+      if (UI.statusBox && UI.overlay && !STATE.batchRunning) {
+        const txt = UI.statusBox.querySelector(".status-text");
+        if (txt) {
+          if (phase === "cancel_request") txt.textContent = "Cancelando auto-subida...";
+          else if (phase === "paused") txt.textContent = `Auto-subida pausada (${done}/${queued}).`;
+          else if (phase === "resumed") txt.textContent = `Auto-subida reanudada (${done}/${queued}).`;
+          else if (phase === "safety_stop") txt.textContent = `Auto-subida detenida por fusible (límite ${Number(msg?.fuseMax || 0)}).`;
+          else if (phase === "cancelled") txt.textContent = `Auto-subida cancelada (${done}/${queued}).`;
+          else if (phase === "done_all") txt.textContent = `Auto-subida completada: ${ok} OK, ${err} error.`;
+          else if (phase === "processing") txt.textContent = `Auto-subida en curso (${done}/${queued})...`;
+        }
+      }
+      updateUI();
+      updateBatchButtonUi();
+    } catch (_) {}
   }
 
   const listener = (msg) => {
@@ -1213,6 +1355,7 @@ function handleError({ jobId, error }) {
     else if (msg.type === "MACA_OVERLAY_RESULT") handleResult(msg);
     else if (msg.type === "MACA_OVERLAY_ERROR") handleError(msg);
     else if (msg.type === "MACA_OVERLAY_PROGRESS") handleProgress(msg);
+    else if (msg.type === "MACA_AUTO_UPLOAD_PROGRESS") handleAutoUploadProgress(msg);
     else if (msg.type === "MACA_OVERLAY_CLOSE") closeAll();
   };
 

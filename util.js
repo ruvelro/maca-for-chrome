@@ -70,11 +70,22 @@ export function normalizeCaptionText(caption) {
 
 export async function fetchWithTimeout(url, options = {}, timeoutMs = 25000) {
   const controller = new AbortController();
+  const externalSignal = options?.signal;
+  let removeExternalAbort = null;
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else {
+      const onAbort = () => controller.abort();
+      externalSignal.addEventListener("abort", onAbort, { once: true });
+      removeExternalAbort = () => externalSignal.removeEventListener("abort", onAbort);
+    }
+  }
   const id = setTimeout(() => controller.abort(), Math.max(1, timeoutMs | 0));
   try {
     return await fetch(url, { ...options, signal: controller.signal });
   } finally {
     clearTimeout(id);
+    try { removeExternalAbort?.(); } catch (_) {}
   }
 }
 
@@ -100,7 +111,7 @@ export function pickOutputTextFromOpenAIResponse(respJson) {
   return "";
 }
 
-export async function toBase64DataUrlFromUrl(imageUrl) {
+export async function toBase64DataUrlFromUrl(imageUrl, signal = null) {
   if (!isAllowedImageUrl(imageUrl)) {
     throw new Error("URL de imagen no soportada por seguridad.");
   }
@@ -131,7 +142,7 @@ export async function toBase64DataUrlFromUrl(imageUrl) {
 
   const res = await fetchWithTimeout(
     imageUrl,
-    { credentials: "omit", cache: "no-store", referrerPolicy: "no-referrer" },
+    { credentials: "omit", cache: "no-store", referrerPolicy: "no-referrer", signal: signal || undefined },
     25000
   );
   if (!res.ok) throw new Error(`No se pudo descargar la imagen (${res.status}).`);

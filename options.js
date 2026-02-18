@@ -9,9 +9,18 @@ const els = {
   wpAutoAnalyzeOnUpload: document.getElementById("wpAutoAnalyzeOnUpload"),
   autoAnalyzeOnSelectMedia: document.getElementById("autoAnalyzeOnSelectMedia"),
   autoDeselectProcessedOnAutoFill: document.getElementById("autoDeselectProcessedOnAutoFill"),
+  autoQueueModeVisible: document.getElementById("autoQueueModeVisible"),
+  autoUploadSafetyFuseEnabled: document.getElementById("autoUploadSafetyFuseEnabled"),
+  autoUploadSafetyFuseMaxQueued: document.getElementById("autoUploadSafetyFuseMaxQueued"),
   generateMode: document.getElementById("generateMode"),
   altMaxLength: document.getElementById("altMaxLength"),
   avoidImagePrefix: document.getElementById("avoidImagePrefix"),
+  postValidationEnabled: document.getElementById("postValidationEnabled"),
+  postValidationRejectGeneric: document.getElementById("postValidationRejectGeneric"),
+  postValidationTitleMinWords: document.getElementById("postValidationTitleMinWords"),
+  postValidationTitleMaxWords: document.getElementById("postValidationTitleMaxWords"),
+  postValidationAltMinChars: document.getElementById("postValidationAltMinChars"),
+  postValidationCaptionMinChars: document.getElementById("postValidationCaptionMinChars"),
   onCompleteAction: document.getElementById("onCompleteAction"),
   onCompleteScope: document.getElementById("onCompleteScope"),
   historyLimit: document.getElementById("historyLimit"),
@@ -42,6 +51,9 @@ const els = {
   clearHistory: document.getElementById("clearHistory"),
   historyEnabled: document.getElementById("historyEnabled"),
   copySupport: document.getElementById("copySupport"),
+  copyMetrics: document.getElementById("copyMetrics"),
+  clearMetrics: document.getElementById("clearMetrics"),
+  metricsSummary: document.getElementById("metricsSummary"),
   save: document.getElementById("save"),
   reset: document.getElementById("reset"),
   status: document.getElementById("status"),
@@ -116,6 +128,45 @@ els.copySupport?.addEventListener("click", async () => {
 els.clearDebug?.addEventListener("click", async () => {
   await chrome.storage.local.set({ debugLog: [] });
   setStatus("Diagnóstico borrado.");
+});
+
+async function renderMetricsSummary() {
+  if (!els.metricsSummary) return;
+  const { metrics = {} } = await chrome.storage.local.get({ metrics: {} });
+  const total = metrics?.total || {};
+  const lines = [];
+  lines.push(`Total llamadas: ${Number(total.calls || 0)}`);
+  lines.push(`Total OK: ${Number(total.ok || 0)} · Error: ${Number(total.error || 0)}`);
+  lines.push(`Tiempo medio: ${Number(total.calls || 0) > 0 ? Math.round(Number(total.totalMs || 0) / Number(total.calls || 1)) : 0} ms`);
+  if (metrics?.updatedAt) lines.push(`Actualizado: ${metrics.updatedAt}`);
+  lines.push("");
+  lines.push("Por proveedor/modelo:");
+  const byPm = metrics?.byProviderModel || {};
+  const pmItems = Object.values(byPm)
+    .sort((a, b) => Number(b?.calls || 0) - Number(a?.calls || 0))
+    .slice(0, 12);
+  for (const it of pmItems) {
+    const calls = Number(it?.calls || 0);
+    const avg = calls > 0 ? Math.round(Number(it?.totalMs || 0) / calls) : 0;
+    lines.push(`- ${it?.provider || "?"} / ${it?.model || "?"} => ${calls} (${Number(it?.ok || 0)} OK, ${Number(it?.error || 0)} ERR, ${avg} ms)`);
+  }
+  els.metricsSummary.textContent = lines.join("\n");
+}
+
+els.copyMetrics?.addEventListener("click", async () => {
+  const { metrics = {} } = await chrome.storage.local.get({ metrics: {} });
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(metrics, null, 2));
+    setStatus("Métricas copiadas.");
+  } catch (_) {
+    setStatus("No se pudieron copiar las métricas.");
+  }
+});
+
+els.clearMetrics?.addEventListener("click", async () => {
+  await chrome.storage.local.set({ metrics: {} });
+  await renderMetricsSummary();
+  setStatus("Métricas borradas.");
 });
 
 
@@ -200,6 +251,13 @@ function updateCaptionTemplateUi() {
   const on = !!els.captionTemplateEnabled.checked;
   els.captionTemplate.disabled = !on;
   els.captionTemplate.style.opacity = on ? "1" : "0.65";
+}
+
+function updateAutoFuseUi() {
+  if (!els.autoUploadSafetyFuseMaxQueued || !els.autoUploadSafetyFuseEnabled) return;
+  const on = !!els.autoUploadSafetyFuseEnabled.checked;
+  els.autoUploadSafetyFuseMaxQueued.disabled = !on;
+  els.autoUploadSafetyFuseMaxQueued.style.opacity = on ? "1" : "0.65";
 }
 
 function applyProviderUi(provider, cfg = {}) {
@@ -322,9 +380,18 @@ function getEffectiveModel(provider) {
     wpAutoAnalyzeOnUpload: false,
     autoAnalyzeOnSelectMedia: false,
     autoDeselectProcessedOnAutoFill: false,
+    autoQueueModeVisible: true,
+    autoUploadSafetyFuseEnabled: true,
+    autoUploadSafetyFuseMaxQueued: 24,
     generateMode: "both",
     altMaxLength: 125,
     avoidImagePrefix: true,
+    postValidationEnabled: false,
+    postValidationRejectGeneric: true,
+    postValidationTitleMinWords: 2,
+    postValidationTitleMaxWords: 8,
+    postValidationAltMinChars: 0,
+    postValidationCaptionMinChars: 0,
     onCompleteAction: "none",
     onCompleteScope: "wp",
     historyLimit: 20,
@@ -359,6 +426,9 @@ function getEffectiveModel(provider) {
     if (els.wpAutoAnalyzeOnUpload) els.wpAutoAnalyzeOnUpload.checked = !!cfg.wpAutoAnalyzeOnUpload;
     if (els.autoAnalyzeOnSelectMedia) els.autoAnalyzeOnSelectMedia.checked = !!cfg.autoAnalyzeOnSelectMedia;
     if (els.autoDeselectProcessedOnAutoFill) els.autoDeselectProcessedOnAutoFill.checked = !!cfg.autoDeselectProcessedOnAutoFill;
+    if (els.autoQueueModeVisible) els.autoQueueModeVisible.checked = cfg.autoQueueModeVisible !== false;
+    if (els.autoUploadSafetyFuseEnabled) els.autoUploadSafetyFuseEnabled.checked = cfg.autoUploadSafetyFuseEnabled !== false;
+    if (els.autoUploadSafetyFuseMaxQueued) els.autoUploadSafetyFuseMaxQueued.value = String(Number.isFinite(Number(cfg.autoUploadSafetyFuseMaxQueued)) ? Number(cfg.autoUploadSafetyFuseMaxQueued) : 24);
     if (els.shortcutEnabled) els.shortcutEnabled.checked = !!cfg.shortcutEnabled;
     if (els.languageAutoEsEs) els.languageAutoEsEs.checked = !!cfg.languageAutoEsEs;
     if (els.allowDecorativeAltEmpty) els.allowDecorativeAltEmpty.checked = !!cfg.allowDecorativeAltEmpty;
@@ -372,6 +442,12 @@ function getEffectiveModel(provider) {
     if (els.generateMode) els.generateMode.value = String(cfg.generateMode || "both");
     if (els.altMaxLength) els.altMaxLength.value = String(Number.isFinite(Number(cfg.altMaxLength)) ? Number(cfg.altMaxLength) : 125);
     if (els.avoidImagePrefix) els.avoidImagePrefix.checked = (cfg.avoidImagePrefix !== undefined) ? !!cfg.avoidImagePrefix : true;
+    if (els.postValidationEnabled) els.postValidationEnabled.checked = !!cfg.postValidationEnabled;
+    if (els.postValidationRejectGeneric) els.postValidationRejectGeneric.checked = (cfg.postValidationRejectGeneric !== undefined) ? !!cfg.postValidationRejectGeneric : true;
+    if (els.postValidationTitleMinWords) els.postValidationTitleMinWords.value = String(Number.isFinite(Number(cfg.postValidationTitleMinWords)) ? Number(cfg.postValidationTitleMinWords) : 2);
+    if (els.postValidationTitleMaxWords) els.postValidationTitleMaxWords.value = String(Number.isFinite(Number(cfg.postValidationTitleMaxWords)) ? Number(cfg.postValidationTitleMaxWords) : 8);
+    if (els.postValidationAltMinChars) els.postValidationAltMinChars.value = String(Number.isFinite(Number(cfg.postValidationAltMinChars)) ? Number(cfg.postValidationAltMinChars) : 0);
+    if (els.postValidationCaptionMinChars) els.postValidationCaptionMinChars.value = String(Number.isFinite(Number(cfg.postValidationCaptionMinChars)) ? Number(cfg.postValidationCaptionMinChars) : 0);
     if (els.onCompleteAction) els.onCompleteAction.value = String(cfg.onCompleteAction || "none");
     if (els.onCompleteScope) els.onCompleteScope.value = String(cfg.onCompleteScope || "wp");
     if (els.historyLimit) els.historyLimit.value = String(Number.isFinite(Number(cfg.historyLimit)) ? Number(cfg.historyLimit) : 20);
@@ -381,6 +457,7 @@ function getEffectiveModel(provider) {
     applyProviderUi(cfg.provider, cfg);
     updateApiKeyHelpText();
     updateCaptionTemplateUi();
+    updateAutoFuseUi();
 
     if (!LOCAL_PROVIDERS.has(cfg.provider)) {
       const providerCfg = PROVIDERS[cfg.provider] || PROVIDERS.openai;
@@ -407,9 +484,11 @@ function getEffectiveModel(provider) {
     }
 
 })();
+renderMetricsSummary();
 
 
 els.captionTemplateEnabled?.addEventListener("change", updateCaptionTemplateUi);
+els.autoUploadSafetyFuseEnabled?.addEventListener("change", updateAutoFuseUi);
 
 els.provider.addEventListener("change", () => {
   const p = els.provider.value;
@@ -484,6 +563,9 @@ els.save.addEventListener("click", async () => {
     wpAutoAnalyzeOnUpload: !!els.wpAutoAnalyzeOnUpload?.checked,
     autoAnalyzeOnSelectMedia: !!els.autoAnalyzeOnSelectMedia?.checked,
     autoDeselectProcessedOnAutoFill: !!els.autoDeselectProcessedOnAutoFill?.checked,
+    autoQueueModeVisible: !!els.autoQueueModeVisible?.checked,
+    autoUploadSafetyFuseEnabled: !!els.autoUploadSafetyFuseEnabled?.checked,
+    autoUploadSafetyFuseMaxQueued: Number.isFinite(Number(els.autoUploadSafetyFuseMaxQueued?.value)) ? Number(els.autoUploadSafetyFuseMaxQueued.value) : 24,
     shortcutEnabled: !!els.shortcutEnabled?.checked,
     languageAutoEsEs: !!els.languageAutoEsEs?.checked,
     allowDecorativeAltEmpty: !!els.allowDecorativeAltEmpty?.checked,
@@ -496,6 +578,12 @@ els.save.addEventListener("click", async () => {
     generateMode: String(els.generateMode?.value || "both"),
     altMaxLength: Number.isFinite(Number(els.altMaxLength?.value)) ? Number(els.altMaxLength.value) : 125,
     avoidImagePrefix: !!els.avoidImagePrefix?.checked,
+    postValidationEnabled: !!els.postValidationEnabled?.checked,
+    postValidationRejectGeneric: !!els.postValidationRejectGeneric?.checked,
+    postValidationTitleMinWords: Number.isFinite(Number(els.postValidationTitleMinWords?.value)) ? Number(els.postValidationTitleMinWords.value) : 2,
+    postValidationTitleMaxWords: Number.isFinite(Number(els.postValidationTitleMaxWords?.value)) ? Number(els.postValidationTitleMaxWords.value) : 8,
+    postValidationAltMinChars: Number.isFinite(Number(els.postValidationAltMinChars?.value)) ? Number(els.postValidationAltMinChars.value) : 0,
+    postValidationCaptionMinChars: Number.isFinite(Number(els.postValidationCaptionMinChars?.value)) ? Number(els.postValidationCaptionMinChars.value) : 0,
     onCompleteAction: String(els.onCompleteAction?.value || "none"),
     onCompleteScope: String(els.onCompleteScope?.value || "wp"),
     historyLimit: Number.isFinite(Number(els.historyLimit?.value)) ? Number(els.historyLimit.value) : 20,
@@ -561,7 +649,7 @@ els.clearHistory?.addEventListener("click", () => {
 els.reset.addEventListener("click", () => {
   if (!confirm("¿Restablecer configuración?")) return;
   chrome.storage.sync.clear(() => {
-    chrome.storage.local.remove(["apiKey", "history", "lastJob"], () => location.reload());
+    chrome.storage.local.remove(["apiKey", "history", "lastJob", "metrics"], () => location.reload());
   });
 });
 

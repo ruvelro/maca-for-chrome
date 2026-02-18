@@ -46,6 +46,15 @@ const DEFAULT_SYNC_CFG = {
   captionTemplate: "{{caption}}",
   captionSignatureText: "",
   autoCaptionSignatureOnAutoFill: false,
+  autoQueueModeVisible: true,
+  autoUploadSafetyFuseEnabled: true,
+  autoUploadSafetyFuseMaxQueued: 24,
+  postValidationEnabled: false,
+  postValidationRejectGeneric: true,
+  postValidationTitleMinWords: 2,
+  postValidationTitleMaxWords: 8,
+  postValidationAltMinChars: 0,
+  postValidationCaptionMinChars: 0,
   // Debug
   debugEnabled: false,
   shortcutEnabled: false,
@@ -58,7 +67,7 @@ const DEFAULT_SYNC_CFG = {
   localEndpoint: "",
   localModel: ""
 };
-const DEFAULT_LOCAL_CFG = { apiKey: "" };
+const DEFAULT_LOCAL_CFG = { apiKey: "", metrics: {} };
 
 let _cfgCache = null;
 let _cfgCachePromise = null;
@@ -312,6 +321,49 @@ function adjustDefaultPromptForModeAndSeo(tpl, { mode, altMaxLength, avoidImageP
 }
 // NOTE: fetchWithTimeout is imported from util.js. Do not re-declare it here.
 
+function isOpenRouterGlm(provider, model) {
+  return String(provider || "") === "openrouter" && /glm/i.test(String(model || ""));
+}
+
+function getOpenRouterGlmQualityPrompt(mode) {
+  const m = String(mode || "both");
+  const outLines =
+    m === "alt"
+      ? ["ALT: <texto final>", "TITLE: <texto final breve>"]
+      : (m === "caption"
+        ? ["LEYENDA: <frase final breve>"]
+        : ["ALT: <texto final>", "TITLE: <texto final breve (3-6 palabras)>", "LEYENDA: <frase final breve>"]);
+  return [
+    "MODO CALIDAD (OpenRouter/GLM):",
+    "- Describe SOLO lo visible en la imagen, sin inventar.",
+    "- Evita frases genéricas como: \"pantalla encendida\", \"contenido multimedia\", \"imagen de\", \"foto de\".",
+    "- ALT: 90-125 caracteres, descriptivo y concreto.",
+    "- TITLE: 3-6 palabras, claro y natural.",
+    "- LEYENDA: 1 frase editorial breve, con contexto visual.",
+    "- No devuelvas razonamiento, pasos, ni explicaciones.",
+    "- Devuelve SOLO la salida final en el formato solicitado.",
+    ...outLines
+  ].join("\n");
+}
+
+function ensureTrailingPeriod(text) {
+  const s = String(text || "").trim();
+  if (!s) return "";
+  if (/[.!?…]$/.test(s)) return s;
+  return `${s}.`;
+}
+
+function ensureAltTrailingPeriodWithinLimit(text, maxLen) {
+  let s = String(text || "").trim();
+  if (!s) return "";
+  if (/[.!?…]$/.test(s)) return s;
+  const n = Number(maxLen);
+  if (Number.isFinite(n) && n > 0 && (s.length + 1) > n) {
+    s = s.slice(0, Math.max(0, n - 1)).trim();
+  }
+  return `${s}.`;
+}
+
 function pickTextFromOpenAICompat(json) {
   if (!json) return "";
 
@@ -546,7 +598,8 @@ if (chrome?.commands?.onCommand?.addListener) {
           imageUrl: imgUrl,
           filenameContext,
           pageUrl,
-          withCaptionSignature: !!cfg.wpAutoApply && !!cfg.autoCaptionSignatureOnAutoFill
+          withCaptionSignature: !!cfg.wpAutoApply && !!cfg.autoCaptionSignatureOnAutoFill,
+          source: "shortcut"
         });
 
         await sendOverlay(tabId, {
@@ -557,6 +610,13 @@ if (chrome?.commands?.onCommand?.addListener) {
           leyenda
         });
       } catch (err) {
+        await addMetricsSample(cfg, {
+          ok: false,
+          ms: 0,
+          mode: String(cfg.generateMode || "both"),
+          source: "shortcut",
+          error: err?.message || String(err)
+        });
         await sendOverlay(tabId, {
           type: "MACA_OVERLAY_ERROR",
           jobId,
@@ -572,6 +632,11 @@ const __lastCandidateByTab = new Map();
 const __autoUploadQueueByTab = new Map();
 const __autoUploadSeenByTab = new Map();
 const __autoUploadStatsByTab = new Map();
+const __autoUploadCancelByTab = new Map();
+const __autoUploadPausedByTab = new Map();
+const __autoUploadPendingIdsByTab = new Map();
+const __batchCancelByTab = new Map();
+const __batchAbortByTab = new Map();
 
 function wasRecentlyAutoProcessed(tabId, attachmentId, ttlMs = 5 * 60 * 1000) {
   const byTab = __autoUploadSeenByTab.get(tabId);
@@ -609,6 +674,42 @@ function enqueueAutoUploadJob(tabId, jobFn) {
   return next;
 }
 
+function getAutoPendingIds(tabId) {
+  let list = __autoUploadPendingIdsByTab.get(tabId);
+  if (!list) {
+    list = [];
+    __autoUploadPendingIdsByTab.set(tabId, list);
+  }
+  return list;
+}
+
+function enqueueAutoPendingId(tabId, attachmentId) {
+  const id = String(attachmentId || "");
+  if (!id) return;
+  const list = getAutoPendingIds(tabId);
+  if (!list.includes(id)) list.push(id);
+}
+
+function dequeueAutoPendingId(tabId, attachmentId) {
+  const id = String(attachmentId || "");
+  if (!id) return;
+  const list = getAutoPendingIds(tabId);
+  const idx = list.indexOf(id);
+  if (idx >= 0) list.splice(idx, 1);
+}
+
+function queuePreviewFromTab(tabId, maxLen = 8) {
+  const list = getAutoPendingIds(tabId);
+  return list.slice(0, Math.max(1, maxLen | 0));
+}
+
+async function waitIfAutoUploadPaused(tabId) {
+  while (__autoUploadPausedByTab.get(tabId) === true) {
+    if (__autoUploadCancelByTab.get(tabId) === true) throw new Error("AUTO_UPLOAD_CANCELLED");
+    await new Promise((r) => setTimeout(r, 150));
+  }
+}
+
 function getAutoUploadStats(tabId) {
   let s = __autoUploadStatsByTab.get(tabId);
   if (!s) {
@@ -631,7 +732,151 @@ function resetAutoUploadStatsLater(tabId, delayMs = 12000) {
 
 async function sendAutoUploadProgress(tabId, payload) {
   try {
-    await chrome.tabs.sendMessage(tabId, { type: "MACA_AUTO_UPLOAD_PROGRESS", ...(payload || {}) });
+    const base = payload || {};
+    await chrome.tabs.sendMessage(tabId, {
+      type: "MACA_AUTO_UPLOAD_PROGRESS",
+      queue: queuePreviewFromTab(tabId),
+      paused: __autoUploadPausedByTab.get(tabId) === true,
+      ...(base || {})
+    });
+  } catch (_) {}
+}
+
+function shouldFallbackOpenRouterCompatibility(status, json) {
+  if (status !== 400 && status !== 422) return false;
+  const msg = String(
+    json?.error?.message ||
+    json?.error ||
+    json?.message ||
+    ""
+  ).toLowerCase();
+  return (
+    msg.includes("response_format") ||
+    msg.includes("json_schema") ||
+    msg.includes("reasoning") ||
+    msg.includes("provider") ||
+    msg.includes("unsupported parameter") ||
+    msg.includes("invalid parameter")
+  );
+}
+
+function countWords(s) {
+  const t = String(s || "").trim();
+  if (!t) return 0;
+  return t.split(/\s+/).filter(Boolean).length;
+}
+
+function isGenericText(s) {
+  const t = String(s || "").trim().toLowerCase();
+  if (!t) return true;
+  const banned = [
+    "imagen de",
+    "foto de",
+    "escena principal de la imagen",
+    "contenido multimedia",
+    "imagen",
+    "foto"
+  ];
+  return banned.includes(t);
+}
+
+function applyPostValidation(cfg, { mode, alt, title, leyenda, decorative, altAllowedEmpty }) {
+  const enabled = !!cfg?.postValidationEnabled;
+  if (!enabled) return { alt, title, leyenda };
+
+  const rejectGeneric = !!cfg?.postValidationRejectGeneric;
+  const titleMinWords = Number.isFinite(Number(cfg?.postValidationTitleMinWords)) ? Number(cfg.postValidationTitleMinWords) : 2;
+  const titleMaxWords = Number.isFinite(Number(cfg?.postValidationTitleMaxWords)) ? Number(cfg.postValidationTitleMaxWords) : 8;
+  const altMinChars = Number.isFinite(Number(cfg?.postValidationAltMinChars)) ? Number(cfg.postValidationAltMinChars) : 0;
+  const captionMinChars = Number.isFinite(Number(cfg?.postValidationCaptionMinChars)) ? Number(cfg.postValidationCaptionMinChars) : 0;
+
+  const m = String(mode || "both");
+  const out = {
+    alt: String(alt || ""),
+    title: String(title || ""),
+    leyenda: String(leyenda || "")
+  };
+
+  if (m !== "caption") {
+    if (!altAllowedEmpty && altMinChars > 0 && out.alt.length < altMinChars) {
+      throw new Error(`Validación: ALT demasiado corto (< ${altMinChars}).`);
+    }
+    if (rejectGeneric && out.alt && isGenericText(out.alt)) {
+      throw new Error("Validación: ALT demasiado genérico.");
+    }
+    const tw = countWords(out.title);
+    if (tw > 0 && tw < Math.max(1, titleMinWords)) {
+      throw new Error(`Validación: title demasiado corto (< ${titleMinWords} palabras).`);
+    }
+    if (tw > Math.max(titleMinWords, titleMaxWords)) {
+      out.title = out.title.split(/\s+/).slice(0, Math.max(1, titleMaxWords)).join(" ");
+    }
+    if (rejectGeneric && out.title && isGenericText(out.title)) {
+      throw new Error("Validación: title demasiado genérico.");
+    }
+  }
+
+  if (m !== "alt") {
+    if (captionMinChars > 0 && out.leyenda.length < captionMinChars) {
+      throw new Error(`Validación: leyenda demasiado corta (< ${captionMinChars}).`);
+    }
+    if (rejectGeneric && out.leyenda && isGenericText(out.leyenda)) {
+      throw new Error("Validación: leyenda demasiado genérica.");
+    }
+  }
+
+  return out;
+}
+
+async function addMetricsSample(cfg, sample) {
+  try {
+    const local = await chrome.storage.local.get({ metrics: {} });
+    const metrics = (local && typeof local.metrics === "object" && local.metrics) ? local.metrics : {};
+    const now = Date.now();
+    const provider = String(sample?.provider || cfg?.provider || "unknown");
+    const model = String(
+      sample?.model ||
+      ((provider === "local_ollama" || provider === "local_openai")
+        ? (cfg?.localModel || cfg?.model || "")
+        : (cfg?.model || ""))
+    );
+    const ok = !!sample?.ok;
+    const ms = Math.max(0, Number(sample?.ms || 0));
+    const mode = String(sample?.mode || "both");
+    const source = String(sample?.source || "manual");
+    const key = `${provider}::${model}`;
+
+    metrics.total = metrics.total || { calls: 0, ok: 0, error: 0, totalMs: 0 };
+    metrics.total.calls += 1;
+    metrics.total.totalMs += ms;
+    if (ok) metrics.total.ok += 1; else metrics.total.error += 1;
+
+    metrics.byProviderModel = metrics.byProviderModel || {};
+    const pm = metrics.byProviderModel[key] || { provider, model, calls: 0, ok: 0, error: 0, totalMs: 0, lastAt: 0, lastError: "" };
+    pm.calls += 1;
+    pm.totalMs += ms;
+    pm.lastAt = now;
+    if (ok) pm.ok += 1;
+    else {
+      pm.error += 1;
+      pm.lastError = String(sample?.error || "");
+    }
+    metrics.byProviderModel[key] = pm;
+
+    metrics.bySource = metrics.bySource || {};
+    const src = metrics.bySource[source] || { calls: 0, ok: 0, error: 0 };
+    src.calls += 1;
+    if (ok) src.ok += 1; else src.error += 1;
+    metrics.bySource[source] = src;
+
+    metrics.byMode = metrics.byMode || {};
+    const md = metrics.byMode[mode] || { calls: 0, ok: 0, error: 0 };
+    md.calls += 1;
+    if (ok) md.ok += 1; else md.error += 1;
+    metrics.byMode[mode] = md;
+
+    metrics.updatedAt = nowIso();
+    await chrome.storage.local.set({ metrics });
   } catch (_) {}
 }
 
@@ -703,6 +948,11 @@ if (chrome?.tabs?.onRemoved?.addListener) {
     __autoUploadQueueByTab.delete(tabId);
     __autoUploadSeenByTab.delete(tabId);
     __autoUploadStatsByTab.delete(tabId);
+    __autoUploadCancelByTab.delete(tabId);
+    __autoUploadPausedByTab.delete(tabId);
+    __autoUploadPendingIdsByTab.delete(tabId);
+    __batchCancelByTab.delete(tabId);
+    __batchAbortByTab.delete(tabId);
   });
 }
 
@@ -820,7 +1070,8 @@ if (chrome?.contextMenus?.onClicked?.addListener) chrome.contextMenus.onClicked.
           imageUrl: imgUrl,
           filenameContext,
           pageUrl,
-          withCaptionSignature: useCaptionSignature || (!!cfg.wpAutoApply && !!cfg.autoCaptionSignatureOnAutoFill)
+          withCaptionSignature: useCaptionSignature || (!!cfg.wpAutoApply && !!cfg.autoCaptionSignatureOnAutoFill),
+          source: "contextmenu"
         });
 
         await sendOverlay(tabId, {
@@ -831,6 +1082,13 @@ if (chrome?.contextMenus?.onClicked?.addListener) chrome.contextMenus.onClicked.
           leyenda
         });
       } catch (err) {
+        await addMetricsSample(cfg, {
+          ok: false,
+          ms: 0,
+          mode: String(cfg.generateMode || "both"),
+          source: "contextmenu",
+          error: err?.message || String(err)
+        });
         await sendOverlay(tabId, {
           type: "MACA_OVERLAY_ERROR",
           jobId,
@@ -846,7 +1104,7 @@ if (chrome?.contextMenus?.onClicked?.addListener) chrome.contextMenus.onClicked.
 // Shared analysis pipeline (WP button + context menu)
 // =========================
 
-async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSignature = false, modeOverride = "" }) {
+async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSignature = false, modeOverride = "", abortSignal = null, source = "manual" }) {
   if (!isWpAdminUrl(pageUrl || "")) {
     throw new Error("maca está limitada a WordPress (wp-admin).");
   }
@@ -854,7 +1112,12 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSig
     throw new Error("URL de imagen no soportada por seguridad.");
   }
 
+  const startedAt = Date.now();
   const cfg = await getConfigCached();
+  const selectedModel = (cfg.provider === "local_ollama" || cfg.provider === "local_openai")
+    ? (cfg.localModel || cfg.model || "")
+    : cfg.model;
+  const mode = String(modeOverride || cfg.generateMode || "both"); // both | alt | caption
   await addDebugLog(cfg, "analyze_start", { provider: cfg.provider, model: cfg.model, mode: String(modeOverride || cfg.generateMode || "both"), pageHost: safeHost(pageUrl), imageUrl });
 
   const isLocal = cfg.provider === "local_ollama" || cfg.provider === "local_openai";
@@ -862,11 +1125,10 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSig
     throw new Error("Falta la API key. Ve a Opciones.");
   }
 
-  const { dataUrl, mime } = await toBase64DataUrlFromUrl(imageUrl);
+  const { dataUrl, mime } = await toBase64DataUrlFromUrl(imageUrl, abortSignal);
 
   const contextBlock = buildFilenameContextBlock({ filenameContext, imageUrl });
 
-  const mode = String(modeOverride || cfg.generateMode || "both"); // both | alt | caption
   const altMaxLength = Number.isFinite(Number(cfg.altMaxLength)) ? Number(cfg.altMaxLength) : 125;
   const avoidImagePrefix = (cfg.avoidImagePrefix !== undefined) ? !!cfg.avoidImagePrefix : true;
 
@@ -877,10 +1139,18 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSig
 
   const usingCustomPrompt = !!(cfg.prompt && cfg.prompt.trim());
   let basePrompt = usingCustomPrompt ? cfg.prompt : getPromptForProfile(cfg.seoProfile);
+  const useOpenRouterGlm = isOpenRouterGlm(cfg.provider, selectedModel);
+  const requestOptions = (opts) => {
+    if (!abortSignal) return opts;
+    return { ...(opts || {}), signal: abortSignal };
+  };
 
   // Only rewrite the *default* prompt. If the user wrote a custom prompt, respect it.
   if (!usingCustomPrompt) {
     basePrompt = adjustDefaultPromptForModeAndSeo(basePrompt, { mode, altMaxLength, avoidImagePrefix });
+    if (useOpenRouterGlm) {
+      basePrompt = `${basePrompt}\n\n${getOpenRouterGlmQualityPrompt(mode)}`;
+    }
   }
 
   const finalPrompt =
@@ -894,7 +1164,7 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSig
   let rawOutput = "";
 
   if (cfg.provider === "openai") {
-    const res = await fetchWithTimeout("https://api.openai.com/v1/responses", {
+    const res = await fetchWithTimeout("https://api.openai.com/v1/responses", requestOptions({
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -912,7 +1182,7 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSig
           }
         ]
       })
-    });
+    }));
 
     const json = await safeJson(res);
     if (!res.ok) {
@@ -924,7 +1194,7 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSig
     const base64 = dataUrl.split(",")[1];
     const res = await fetchWithTimeout(
       `https://generativelanguage.googleapis.com/v1beta/models/${cfg.model}:generateContent`,
-      {
+      requestOptions({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -940,7 +1210,7 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSig
             }
           ]
         })
-      }
+      })
     );
 
     const json = await safeJson(res);
@@ -952,6 +1222,7 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSig
       json?.candidates?.[0]?.content?.parts?.map(p => p.text).join("\n") || "";
   } else if (cfg.provider === "openrouter") {
     const model = String(cfg.model || "z-ai/glm-4.6v").trim();
+    const useGlmModel = isOpenRouterGlm("openrouter", model);
     const headers = {
       "Content-Type": "application/json",
       "Authorization": `Bearer ${cfg.apiKey}`,
@@ -959,10 +1230,8 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSig
       "X-Title": "maca for Chrome"
     };
 
-    const res = await fetchWithTimeout("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
+    const makeBody = (withDocsParams = true, withSchema = true) => {
+      const body = {
         model,
         messages: [
           {
@@ -974,10 +1243,83 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSig
           }
         ],
         max_tokens: 500
-      })
-    });
+      };
+      if (useGlmModel && withDocsParams) {
+        body.provider = { allow_fallbacks: false, require_parameters: true };
+        body.reasoning = { exclude: true, effort: "none" };
+      }
+      if (withSchema) {
+        if (mode === "alt") {
+          body.response_format = {
+            type: "json_schema",
+            json_schema: {
+              name: "maca_alt_title",
+              strict: true,
+              schema: {
+                type: "object",
+                properties: {
+                  alt: { type: "string" },
+                  title: { type: "string" },
+                  decorativa: { type: "boolean" }
+                },
+                required: ["alt", "title"],
+                additionalProperties: false
+              }
+            }
+          };
+        } else if (mode === "caption") {
+          body.response_format = {
+            type: "json_schema",
+            json_schema: {
+              name: "maca_caption",
+              strict: true,
+              schema: {
+                type: "object",
+                properties: { leyenda: { type: "string" } },
+                required: ["leyenda"],
+                additionalProperties: false
+              }
+            }
+          };
+        } else {
+          body.response_format = {
+            type: "json_schema",
+            json_schema: {
+              name: "maca_alt_title_caption",
+              strict: true,
+              schema: {
+                type: "object",
+                properties: {
+                  alt: { type: "string" },
+                  title: { type: "string" },
+                  leyenda: { type: "string" },
+                  decorativa: { type: "boolean" }
+                },
+                required: ["alt", "title", "leyenda"],
+                additionalProperties: false
+              }
+            }
+          };
+        }
+      }
+      return body;
+    };
 
-    const json = await safeJson(res);
+    let res = await fetchWithTimeout("https://openrouter.ai/api/v1/chat/completions", requestOptions({
+      method: "POST",
+      headers,
+      body: JSON.stringify(makeBody(true, true))
+    }));
+    let json = await safeJson(res);
+    if (!res.ok && shouldFallbackOpenRouterCompatibility(res.status, json)) {
+      // Fallback compatibility: remove strict docs params/schema if provider rejects them.
+      res = await fetchWithTimeout("https://openrouter.ai/api/v1/chat/completions", requestOptions({
+        method: "POST",
+        headers,
+        body: JSON.stringify(makeBody(false, false))
+      }));
+      json = await safeJson(res);
+    }
     if (!res.ok) {
       throw new Error(json?.error?.message || json?.error || json?.message || "Error OpenRouter");
     }
@@ -986,7 +1328,7 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSig
     const model = String(cfg.model || "claude-3-5-haiku-latest").trim();
     const base64 = dataUrl.split(",")[1];
 
-    const res = await fetchWithTimeout("https://api.anthropic.com/v1/messages", {
+    const res = await fetchWithTimeout("https://api.anthropic.com/v1/messages", requestOptions({
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -1015,7 +1357,7 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSig
           }
         ]
       })
-    });
+    }));
 
     const json = await safeJson(res);
     if (!res.ok) {
@@ -1026,7 +1368,7 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSig
       : "";
   } else if (cfg.provider === "groq") {
     const model = String(cfg.model || "meta-llama/llama-4-scout-17b-16e-instruct").trim();
-    const res = await fetchWithTimeout("https://api.groq.com/openai/v1/chat/completions", {
+    const res = await fetchWithTimeout("https://api.groq.com/openai/v1/chat/completions", requestOptions({
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -1045,7 +1387,7 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSig
         ],
         max_tokens: 500
       })
-    });
+    }));
 
     const json = await safeJson(res);
     if (!res.ok) {
@@ -1061,7 +1403,7 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSig
     const base64 = dataUrl.split(",")[1];
     const url = `${endpoint}/api/chat`;
 
-    const res = await fetchWithTimeout(url, {
+    const res = await fetchWithTimeout(url, requestOptions({
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -1077,7 +1419,7 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSig
           }
         ]
       })
-    });
+    }));
 
     const json = await safeJson(res);
     if (!res.ok) {
@@ -1118,11 +1460,11 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSig
 
     // Try the official OpenAI message format first, then fall back to the simpler
     // "image_url": "data:..." variant used by some local servers.
-    let res = await fetchWithTimeout(url, {
+    let res = await fetchWithTimeout(url, requestOptions({
       method: "POST",
       headers,
       body: JSON.stringify(makeBody(false))
-    });
+    }));
 
     let json = await safeJson(res);
     if (!res.ok) {
@@ -1137,11 +1479,11 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSig
         /image_url|content|array|object|string/i.test(errMsg);
 
       if (shouldRetry) {
-        res = await fetchWithTimeout(url, {
+        res = await fetchWithTimeout(url, requestOptions({
           method: "POST",
           headers,
           body: JSON.stringify(makeBody(true))
-        });
+        }));
         json = await safeJson(res);
       }
 
@@ -1185,7 +1527,7 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSig
     }
   }
 
-  const altFinal = altProvided ? normalizeAltText(parsed.alt, altMaxLength, avoidImagePrefix) : "";
+  let altFinal = altProvided ? normalizeAltText(parsed.alt, altMaxLength, avoidImagePrefix) : "";
   const titleFinal = normalizeCaptionText(
     titleProvided
       ? parsed.title
@@ -1209,11 +1551,35 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSig
     leyendaFinal = normalizeCaptionText(`${leyendaFinal} ${captionSignatureText}`);
   }
 
+  if (cfg.provider === "openrouter") {
+    if (altFinal) {
+      // Keep user's explicit preference to avoid generic image prefix.
+      const noPrefixAlt = normalizeAltText(altFinal, altMaxLength, avoidImagePrefix);
+      if (noPrefixAlt) {
+        // eslint-disable-next-line no-param-reassign
+        altFinal = ensureAltTrailingPeriodWithinLimit(noPrefixAlt, altMaxLength);
+      }
+    }
+    if (leyendaFinal) leyendaFinal = ensureTrailingPeriod(leyendaFinal);
+  }
+
   if (mode === "alt" && !altFinal && !altAllowedEmpty) throw new Error("La IA no devolvió un ALT válido.");
   if (mode === "caption" && !leyendaFinal) throw new Error("La IA no devolvió una leyenda válida.");
   if (mode === "both" && ((!altFinal && !altAllowedEmpty) || !leyendaFinal)) {
     throw new Error("La IA no devolvió un ALT/leyenda válidos.");
   }
+
+  const validated = applyPostValidation(cfg, {
+    mode,
+    alt: altFinal,
+    title: titleFinal,
+    leyenda: leyendaFinal,
+    decorative,
+    altAllowedEmpty
+  });
+  altFinal = validated.alt;
+  const titleValidated = validated.title;
+  leyendaFinal = validated.leyenda;
 
   const record = {
     id: crypto.randomUUID(),
@@ -1222,7 +1588,7 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSig
     mode: mode,
     site: safeHost(pageUrl),
     alt: altFinal,
-    title: titleFinal,
+    title: titleValidated,
     leyenda: leyendaFinal,
     decorativa: decorative,
     source: "contextmenu",
@@ -1254,6 +1620,15 @@ async function analyzeImage({ imageUrl, filenameContext, pageUrl, withCaptionSig
     });
   }
 
+  const ms = Date.now() - startedAt;
+  await addMetricsSample(cfg, {
+    ok: true,
+    ms,
+    mode,
+    source,
+    provider: cfg.provider,
+    model: selectedModel
+  });
   return { alt: record.alt, title: record.title, leyenda: record.leyenda, decorativa: record.decorativa };
 }
 
@@ -1433,6 +1808,7 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
   // 1) Analysis (used by WP button)
   if (msg.type === "MACA_ANALYZE_IMAGE") {
     (async () => {
+      const startedAt = Date.now();
       try {
         const cfg = await getConfigCached();
         const imageUrl = msg.imageUrl;
@@ -1443,11 +1819,20 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
           imageUrl,
           filenameContext,
           pageUrl,
-          withCaptionSignature: !!cfg.wpAutoApply && !!cfg.autoCaptionSignatureOnAutoFill
+          withCaptionSignature: !!cfg.wpAutoApply && !!cfg.autoCaptionSignatureOnAutoFill,
+          source: "overlay_manual"
         });
 
         sendResponse({ alt, title, leyenda, decorativa });
       } catch (err) {
+        const cfg = await getConfigCached().catch(() => ({}));
+        await addMetricsSample(cfg, {
+          ok: false,
+          ms: Date.now() - startedAt,
+          mode: String(cfg?.generateMode || "both"),
+          source: "overlay_manual",
+          error: err?.message || String(err)
+        });
         sendResponse({ error: err.message || String(err) });
       }
     })();
@@ -1458,6 +1843,7 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
   // 1b) Regenerate from overlay (same image)
   if (msg.type === "MACA_REGENERATE") {
     (async () => {
+      const startedAt = Date.now();
       try {
         const cfg = await getConfigCached();
         const imageUrl = msg.imageUrl;
@@ -1467,10 +1853,19 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
           imageUrl,
           filenameContext,
           pageUrl,
-          withCaptionSignature: !!cfg.wpAutoApply && !!cfg.autoCaptionSignatureOnAutoFill
+          withCaptionSignature: !!cfg.wpAutoApply && !!cfg.autoCaptionSignatureOnAutoFill,
+          source: "overlay_regenerate"
         });
         sendResponse({ alt, title, leyenda, decorativa });
       } catch (err) {
+        const cfg = await getConfigCached().catch(() => ({}));
+        await addMetricsSample(cfg, {
+          ok: false,
+          ms: Date.now() - startedAt,
+          mode: String(cfg?.generateMode || "both"),
+          source: "overlay_regenerate",
+          error: err?.message || String(err)
+        });
         sendResponse({ error: err?.message || String(err) });
       }
     })();
@@ -1515,13 +1910,49 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
           sendResponse({ ok: false, skipped: true, reason: "disabled" });
           return;
         }
+        const st = getAutoUploadStats(tabId);
+        if (__autoUploadCancelByTab.get(tabId) === true) {
+          const settled = Number(st.done || 0) >= Number(st.queued || 0);
+          const stale = (Date.now() - Number(st.lastAt || 0)) > 30000;
+          if (settled || stale) __autoUploadCancelByTab.delete(tabId);
+          else {
+            sendResponse({ ok: false, skipped: true, reason: "cancelled" });
+            return;
+          }
+        }
 
         if (wasRecentlyAutoProcessed(tabId, attachmentId)) {
           sendResponse({ ok: true, skipped: true, reason: "duplicate" });
           return;
         }
-        const st = getAutoUploadStats(tabId);
+        const fuseEnabled = cfg.autoUploadSafetyFuseEnabled !== false;
+        const fuseMax = Number.isFinite(Number(cfg.autoUploadSafetyFuseMaxQueued))
+          ? Math.max(5, Number(cfg.autoUploadSafetyFuseMaxQueued))
+          : 24;
+        if (fuseEnabled && Number(st.queued || 0) >= fuseMax) {
+          __autoUploadCancelByTab.set(tabId, true);
+          __autoUploadPausedByTab.delete(tabId);
+          __autoUploadPendingIdsByTab.delete(tabId);
+          await sendAutoUploadProgress(tabId, {
+            phase: "safety_stop",
+            attachmentId,
+            queued: st.queued,
+            done: st.done,
+            ok: st.ok,
+            error: st.error,
+            fuseMax
+          });
+          await addDebugLog(cfg, "auto_upload_safety_fuse", {
+            tabId,
+            attachmentId,
+            queued: st.queued,
+            fuseMax
+          });
+          sendResponse({ ok: false, skipped: true, reason: "safety_fuse", fuseMax });
+          return;
+        }
         st.queued += 1;
+        enqueueAutoPendingId(tabId, attachmentId);
         await sendAutoUploadProgress(tabId, {
           phase: "queued",
           attachmentId,
@@ -1535,6 +1966,13 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
         markedSeen = true;
 
         await enqueueAutoUploadJob(tabId, async () => {
+          if (__autoUploadCancelByTab.get(tabId) === true) {
+            throw new Error("AUTO_UPLOAD_CANCELLED");
+          }
+          await waitIfAutoUploadPaused(tabId);
+          if (__autoUploadCancelByTab.get(tabId) === true) {
+            throw new Error("AUTO_UPLOAD_CANCELLED");
+          }
           await addDebugLog(cfg, "auto_upload_start", { tabId, attachmentId });
           await sendAutoUploadProgress(tabId, {
             phase: "processing",
@@ -1550,8 +1988,12 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
             filenameContext,
             pageUrl,
             modeOverride: "both",
-            withCaptionSignature: !!cfg.autoCaptionSignatureOnAutoFill
+            withCaptionSignature: !!cfg.autoCaptionSignatureOnAutoFill,
+            source: "auto_upload"
           });
+          if (__autoUploadCancelByTab.get(tabId) === true) {
+            throw new Error("AUTO_UPLOAD_CANCELLED");
+          }
 
           const applyPayload = {
             type: "MACA_APPLY_TO_ATTACHMENT",
@@ -1577,6 +2019,7 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
           st.done += 1;
           st.ok += 1;
           st.lastAt = Date.now();
+          dequeueAutoPendingId(tabId, attachmentId);
           await sendAutoUploadProgress(tabId, {
             phase: "done_item",
             attachmentId,
@@ -1586,6 +2029,8 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
             error: st.error
           });
           if (st.done >= st.queued) {
+            __autoUploadPausedByTab.delete(tabId);
+            __autoUploadPendingIdsByTab.delete(tabId);
             await sendAutoUploadProgress(tabId, {
               phase: "done_all",
               attachmentId,
@@ -1602,7 +2047,40 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
 
         sendResponse({ ok: true, attachmentId });
       } catch (err) {
+        if (err?.message === "AUTO_UPLOAD_CANCELLED") {
+          if (markedSeen) unmarkAutoProcessed(tabId, attachmentId);
+          dequeueAutoPendingId(tabId, attachmentId);
+          const st = getAutoUploadStats(tabId);
+          st.done += 1;
+          st.lastAt = Date.now();
+          await sendAutoUploadProgress(tabId, {
+            phase: "cancelled_item",
+            attachmentId,
+            queued: st.queued,
+            done: st.done,
+            ok: st.ok,
+            error: st.error
+          });
+          if (st.done >= st.queued) {
+            __autoUploadPausedByTab.delete(tabId);
+            __autoUploadPendingIdsByTab.delete(tabId);
+            await sendAutoUploadProgress(tabId, {
+              phase: "cancelled",
+              attachmentId,
+              queued: st.queued,
+              done: st.done,
+              ok: st.ok,
+              error: st.error
+            });
+            __autoUploadCancelByTab.delete(tabId);
+            resetAutoUploadStatsLater(tabId, 12000);
+          }
+          sendResponse({ ok: false, skipped: true, reason: "cancelled" });
+          return;
+        }
+
         if (markedSeen) unmarkAutoProcessed(tabId, attachmentId);
+        dequeueAutoPendingId(tabId, attachmentId);
         const st = getAutoUploadStats(tabId);
         st.done += 1;
         st.error += 1;
@@ -1617,6 +2095,8 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
           errorMessage: err?.message || String(err)
         });
         if (st.done >= st.queued) {
+          __autoUploadPausedByTab.delete(tabId);
+          __autoUploadPendingIdsByTab.delete(tabId);
           await sendAutoUploadProgress(tabId, {
             phase: "done_all",
             attachmentId,
@@ -1629,9 +2109,71 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
         }
         const cfg = await getConfigCached().catch(() => ({}));
         await addDebugLog(cfg, "auto_upload_error", { attachmentId, error: err?.message || String(err) });
+        await addMetricsSample(cfg, {
+          ok: false,
+          ms: 0,
+          mode: "both",
+          source: "auto_upload",
+          error: err?.message || String(err)
+        });
         sendResponse({ ok: false, error: err?.message || String(err) });
       }
     })();
+    return true;
+  }
+
+  if (msg.type === "MACA_AUTO_UPLOAD_CANCEL") {
+    const tabId = sender?.tab?.id;
+    if (tabId != null) {
+      __autoUploadCancelByTab.set(tabId, true);
+      __autoUploadPausedByTab.delete(tabId);
+      const st = getAutoUploadStats(tabId);
+      if (Number(st.done || 0) >= Number(st.queued || 0)) {
+        __autoUploadCancelByTab.delete(tabId);
+      }
+      sendAutoUploadProgress(tabId, {
+        phase: (Number(st.done || 0) >= Number(st.queued || 0)) ? "cancelled" : "cancel_request",
+        queued: st.queued,
+        done: st.done,
+        ok: st.ok,
+        error: st.error
+      }).catch(() => {});
+    }
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (msg.type === "MACA_AUTO_UPLOAD_PAUSE") {
+    const tabId = sender?.tab?.id;
+    if (tabId != null) {
+      __autoUploadPausedByTab.set(tabId, true);
+      const st = getAutoUploadStats(tabId);
+      sendAutoUploadProgress(tabId, {
+        phase: "paused",
+        queued: st.queued,
+        done: st.done,
+        ok: st.ok,
+        error: st.error
+      }).catch(() => {});
+    }
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (msg.type === "MACA_AUTO_UPLOAD_RESUME") {
+    const tabId = sender?.tab?.id;
+    if (tabId != null) {
+      __autoUploadPausedByTab.delete(tabId);
+      const st = getAutoUploadStats(tabId);
+      sendAutoUploadProgress(tabId, {
+        phase: "resumed",
+        queued: st.queued,
+        done: st.done,
+        ok: st.ok,
+        error: st.error
+      }).catch(() => {});
+    }
+    sendResponse({ ok: true });
     return true;
   }
 
@@ -1642,6 +2184,9 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
       const tabId = sender?.tab?.id;
       try {
         if (tabId == null) throw new Error("No hay pestaña activa.");
+        __batchCancelByTab.set(tabId, false);
+        const batchAbort = new AbortController();
+        __batchAbortByTab.set(tabId, batchAbort);
         const cfg = await getConfigCached();
 
         await addDebugLog(cfg, "batch_start", { tabId });
@@ -1656,6 +2201,18 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
         const results = [];
 
         for (let i = 0; i < items.length; i++) {
+          if (__batchCancelByTab.get(tabId) === true) {
+            await sendOverlay(tabId, {
+              type: "MACA_OVERLAY_PROGRESS",
+              phase: "cancelled",
+              current: i,
+              total: items.length
+            });
+            await addDebugLog(cfg, "batch_cancelled", { done: i, total: items.length });
+            sendResponse({ ok: true, cancelled: true, total: items.length, done: i, results });
+            return;
+          }
+
           const it = items[i] || {};
           const attachmentId = String(it.id || "");
           const imageUrl = it.imageUrl;
@@ -1676,7 +2233,9 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
               imageUrl,
               filenameContext,
               pageUrl: sender.tab?.url || "",
-              withCaptionSignature: !!cfg.autoCaptionSignatureOnAutoFill
+              withCaptionSignature: !!cfg.autoCaptionSignatureOnAutoFill,
+              abortSignal: batchAbort.signal,
+              source: "batch"
             });
             results.push({ attachmentId, ...out, imageUrl });
 
@@ -1697,8 +2256,26 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
 
             await addDebugLog(cfg, "batch_item_ok", { i: i + 1, total: items.length, attachmentId });
           } catch (errItem) {
+            if (__batchCancelByTab.get(tabId) === true || errItem?.name === "AbortError") {
+              await sendOverlay(tabId, {
+                type: "MACA_OVERLAY_PROGRESS",
+                phase: "cancelled",
+                current: i,
+                total: items.length
+              });
+              await addDebugLog(cfg, "batch_cancelled", { done: i, total: items.length });
+              sendResponse({ ok: true, cancelled: true, total: items.length, done: i, results });
+              return;
+            }
             const msgErr = errItem?.message || String(errItem);
             results.push({ attachmentId, error: msgErr, imageUrl });
+            await addMetricsSample(cfg, {
+              ok: false,
+              ms: 0,
+              mode: String(cfg.generateMode || "both"),
+              source: "batch",
+              error: msgErr
+            });
             await addDebugLog(cfg, "batch_item_error", { i: i + 1, total: items.length, attachmentId, error: msgErr });
           }
         }
@@ -1711,8 +2288,20 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
         const cfg = await getConfigCached().catch(() => ({}));
         await addDebugLog(cfg, "batch_error", { error: err?.message || String(err) });
         sendResponse({ ok: false, error: err?.message || String(err) });
+      } finally {
+        if (tabId != null) __batchCancelByTab.delete(tabId);
+        if (tabId != null) __batchAbortByTab.delete(tabId);
       }
     })();
+    return true;
+  }
+
+  if (msg.type === "MACA_BATCH_CANCEL") {
+    const tabId = sender?.tab?.id;
+    if (tabId != null) __batchCancelByTab.set(tabId, true);
+    const ctl = tabId != null ? __batchAbortByTab.get(tabId) : null;
+    try { ctl?.abort(); } catch (_) {}
+    sendResponse({ ok: true });
     return true;
   }
 

@@ -8,10 +8,14 @@
   const AUTO_UPLOAD = {
     startedAt: Date.now(),
     minAgeMs: 1000,
+    uploadSignalWindowMs: 45000,
+    uploadSessionStartAt: 0,
+    lastUploadingSignalAt: 0,
     byId: new Map()
   };
   const AUTO_UPLOAD_SETTINGS = {
-    autoAnalyzeOnSelectMedia: false
+    autoAnalyzeOnSelectMedia: false,
+    autoQueueModeVisible: true
   };
   let LAST_USER_SELECT_AT = 0;
   const AUTO_PROGRESS = {
@@ -22,14 +26,40 @@
   function refreshAutoUploadSettings() {
     try {
       chrome.storage.sync.get({
-        autoAnalyzeOnSelectMedia: false
+        autoAnalyzeOnSelectMedia: false,
+        autoQueueModeVisible: true
       }, (cfg) => {
         AUTO_UPLOAD_SETTINGS.autoAnalyzeOnSelectMedia = !!cfg?.autoAnalyzeOnSelectMedia;
+        AUTO_UPLOAD_SETTINGS.autoQueueModeVisible = cfg?.autoQueueModeVisible !== false;
       });
     } catch (_) {}
   }
 
-  function countRecentUploadMarked(windowMs = 120000) {
+  function hasRecentUploadSignal() {
+    return (Date.now() - Number(AUTO_UPLOAD.lastUploadingSignalAt || 0)) <= AUTO_UPLOAD.uploadSignalWindowMs;
+  }
+
+  function markUploadSignal() {
+    const now = Date.now();
+    const wasRecent = (now - Number(AUTO_UPLOAD.lastUploadingSignalAt || 0)) <= AUTO_UPLOAD.uploadSignalWindowMs;
+    if (!wasRecent) AUTO_UPLOAD.uploadSessionStartAt = now;
+    AUTO_UPLOAD.lastUploadingSignalAt = now;
+  }
+
+  function nodeHasUploadSignal(node) {
+    try {
+      if (!node || node.nodeType !== 1) return false;
+      const el = node;
+      if (el.matches?.(".attachment.uploading, .uploading, .media-progress-bar, .uploader-inline .uploading")) return true;
+      if (el.matches?.("li.attachment[data-id]") && /\bupload/i.test(String(el.className || ""))) return true;
+      if (el.querySelector?.(".attachment.uploading, .uploading, .media-progress-bar, .uploader-inline .uploading")) return true;
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function countRecentUploadMarked(windowMs = AUTO_UPLOAD.uploadSignalWindowMs) {
     const now = Date.now();
     let n = 0;
     for (const meta of AUTO_UPLOAD.byId.values()) {
@@ -37,9 +67,12 @@
       if (!seenAt) continue;
       const isRecent = (now - seenAt) <= windowMs;
       if (!isRecent) continue;
-      const looksLikeNewAfterBoot = seenAt > (AUTO_UPLOAD.startedAt + 3000);
-      // Count both explicit "uploading" marks and newly appeared attachments.
-      if (!meta?.sawUploading && !looksLikeNewAfterBoot) continue;
+      const inUploadSession = !!hasRecentUploadSignal() && Number(AUTO_UPLOAD.uploadSessionStartAt || 0) > 0;
+      const inferredBySession =
+        inUploadSession &&
+        !meta?.initialScan &&
+        seenAt >= (Number(AUTO_UPLOAD.uploadSessionStartAt || 0) - 1000);
+      if (!meta?.sawUploading && !inferredBySession) continue;
       if (now - Number(meta.firstSeenAt || 0) <= windowMs) n++;
     }
     return n;
@@ -196,12 +229,25 @@
       document;
 
     const browser = root.querySelector(".attachments-browser") || root;
-    const list = browser.querySelector("ul.attachments") || browser.querySelector(".attachments") || browser;
 
+    // Prefer explicit selected tray items when available (most reliable for multi-select).
+    const trayItems = Array.from(browser.querySelectorAll(".media-selection .attachments .attachment[data-id]"));
+    if (trayItems.length) return trayItems;
+
+    const list = pickMainAttachmentsList(browser);
     const els = Array.from(list.querySelectorAll(
-      "li.attachment[aria-checked='true'], li.attachment.selected, li.attachment[aria-selected='true']"
+      "li.attachment[aria-checked='true'], li.attachment.selected"
     ));
     return els;
+  }
+
+  function pickMainAttachmentsList(browser) {
+    const lists = Array.from(browser.querySelectorAll("ul.attachments"));
+    for (const ul of lists) {
+      if (ul.closest(".media-selection")) continue;
+      return ul;
+    }
+    return browser.querySelector("ul.attachments") || browser.querySelector(".attachments") || browser;
   }
 
   function extractCandidateFromAttachmentEl(attEl) {
@@ -295,6 +341,17 @@
         #maca-auto-progress .maca-ap-title { font-weight: 700; margin-bottom: 6px; }
         #maca-auto-progress .maca-ap-row { display: flex; gap: 8px; align-items: center; }
         #maca-auto-progress .maca-ap-count { margin-left: auto; opacity: .9; }
+        #maca-auto-progress .maca-ap-actions { margin-top: 8px; display: flex; justify-content: flex-end; }
+        #maca-auto-progress .maca-ap-actions button {
+          border: 1px solid rgba(255,255,255,.35);
+          background: rgba(255,255,255,.12);
+          color: #fff;
+          border-radius: 8px;
+          padding: 4px 8px;
+          font: 11px/1 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+          cursor: pointer;
+        }
+        #maca-auto-progress .maca-ap-actions button:disabled { opacity: .65; cursor: not-allowed; }
         .maca-attachment-status {
           position: absolute;
           top: 0;
@@ -338,7 +395,31 @@
           <span id="maca-ap-status">En cola...</span>
           <span id="maca-ap-count" class="maca-ap-count">0/0</span>
         </div>
+        <div id="maca-ap-queue" class="maca-ap-queue" style="margin-top:6px; opacity:.9; font-size:11px;"></div>
+        <div class="maca-ap-actions">
+          <button id="maca-ap-pause" type="button">Pausar</button>
+          <button id="maca-ap-cancel" type="button">Cancelar</button>
+        </div>
       `;
+      const pauseBtn = panel.querySelector("#maca-ap-pause");
+      pauseBtn?.addEventListener("click", async () => {
+        try {
+          const paused = pauseBtn.dataset.paused === "1";
+          if (paused) {
+            await chrome.runtime.sendMessage({ type: "MACA_AUTO_UPLOAD_RESUME" });
+          } else {
+            await chrome.runtime.sendMessage({ type: "MACA_AUTO_UPLOAD_PAUSE" });
+          }
+        } catch (_) {}
+      });
+      const cancelBtn = panel.querySelector("#maca-ap-cancel");
+      cancelBtn?.addEventListener("click", async () => {
+        try {
+          cancelBtn.disabled = true;
+          cancelBtn.textContent = "Cancelando...";
+          await chrome.runtime.sendMessage({ type: "MACA_AUTO_UPLOAD_CANCEL" });
+        } catch (_) {}
+      });
       document.body.appendChild(panel);
     }
     return panel;
@@ -392,18 +473,50 @@
     }
     const statusEl = panel.querySelector("#maca-ap-status");
     const countEl = panel.querySelector("#maca-ap-count");
+    const queueEl = panel.querySelector("#maca-ap-queue");
+    const pauseBtn = panel.querySelector("#maca-ap-pause");
+    const cancelBtn = panel.querySelector("#maca-ap-cancel");
     const queued = Number(msg?.queued || 0);
     const done = Number(msg?.done || 0);
     const ok = Number(msg?.ok || 0);
     const err = Number(msg?.error || 0);
     const phase = String(msg?.phase || "");
+    const paused = !!msg?.paused;
+    const queue = Array.isArray(msg?.queue) ? msg.queue.map(v => String(v || "")).filter(Boolean) : [];
 
     if (countEl) countEl.textContent = `${Math.min(done, queued)}/${queued}`;
     if (statusEl) {
       if (phase === "done_all") statusEl.textContent = `Completado: ${ok} OK, ${err} error`;
+      else if (phase === "cancelled") statusEl.textContent = `Cancelado: ${ok} OK, ${err} error`;
+      else if (phase === "safety_stop") statusEl.textContent = `Fusible activado (límite ${Number(msg?.fuseMax || 0)}).`;
+      else if (phase === "cancel_request") statusEl.textContent = "Cancelando...";
+      else if (phase === "paused") statusEl.textContent = "Pausado.";
+      else if (phase === "resumed") statusEl.textContent = "Reanudando...";
       else if (phase === "error_item") statusEl.textContent = `Procesando... (${ok} OK, ${err} error)`;
       else if (phase === "processing") statusEl.textContent = "Analizando y rellenando...";
       else statusEl.textContent = "En cola...";
+    }
+    if (queueEl) {
+      if (AUTO_UPLOAD_SETTINGS.autoQueueModeVisible && queue.length) {
+        queueEl.style.display = "";
+        queueEl.textContent = `Cola: ${queue.join(", ")}`;
+      } else {
+        queueEl.style.display = "none";
+        queueEl.textContent = "";
+      }
+    }
+    if (pauseBtn) {
+      const canPause = !(phase === "done_all" || phase === "cancelled" || phase === "cancel_request");
+      pauseBtn.style.display = canPause ? "" : "none";
+      pauseBtn.dataset.paused = paused ? "1" : "0";
+      pauseBtn.textContent = paused ? "Reanudar" : "Pausar";
+      pauseBtn.disabled = phase === "cancel_request";
+    }
+    if (cancelBtn) {
+      const canCancel = !(phase === "done_all" || phase === "cancelled" || phase === "safety_stop");
+      cancelBtn.style.display = canCancel ? "" : "none";
+      cancelBtn.disabled = phase === "cancel_request";
+      if (phase !== "cancel_request") cancelBtn.textContent = "Cancelar";
     }
     panel.hidden = false;
     AUTO_PROGRESS.uiVisible = true;
@@ -412,7 +525,7 @@
       clearTimeout(AUTO_PROGRESS.hideTimer);
       AUTO_PROGRESS.hideTimer = null;
     }
-    if (phase === "done_all") {
+    if (phase === "done_all" || phase === "cancelled" || phase === "safety_stop") {
       AUTO_PROGRESS.hideTimer = setTimeout(() => {
         panel.hidden = true;
         AUTO_PROGRESS.uiVisible = false;
@@ -641,17 +754,22 @@
     return el.matches("li.attachment[aria-checked='true'], li.attachment[aria-selected='true'], li.attachment.selected");
   }
 
-  function noteAttachmentMeta(el) {
+  function noteAttachmentMeta(el, { initial = false } = {}) {
     if (!el) return null;
     const id = String(el.getAttribute("data-id") || el.dataset?.id || "");
     if (!id) return null;
     const cls = String(el.className || "");
     let meta = AUTO_UPLOAD.byId.get(id);
     if (!meta) {
-      meta = { firstSeenAt: Date.now(), sawUploading: false, triggered: false, retries: 0 };
+      meta = { firstSeenAt: Date.now(), sawUploading: false, triggered: false, retries: 0, initialScan: !!initial };
       AUTO_UPLOAD.byId.set(id, meta);
+    } else if (initial && meta.initialScan !== false) {
+      meta.initialScan = true;
     }
-    if (/\bupload/i.test(cls)) meta.sawUploading = true;
+    if (/\bupload/i.test(cls)) {
+      meta.sawUploading = true;
+      markUploadSignal();
+    }
     return { id, meta };
   }
 
@@ -664,9 +782,10 @@
 
       const selected = isSelectedAttachmentEl(el);
       const fromUpload = !!meta.sawUploading;
-      const looksLikeNewAfterBoot = Number(meta.firstSeenAt || 0) > (AUTO_UPLOAD.startedAt + 3000);
+      const looksLikeNewAfterBoot = !meta.initialScan && Number(meta.firstSeenAt || 0) > (AUTO_UPLOAD.startedAt + 3000);
       const isMultiUpload = countRecentUploadMarked() >= 2;
-      const allowBatchUploadFlow = isMultiUpload && (fromUpload || looksLikeNewAfterBoot);
+      const inUploadSession = hasRecentUploadSignal() && Number(AUTO_UPLOAD.uploadSessionStartAt || 0) > 0;
+      const allowBatchUploadFlow = isMultiUpload && inUploadSession && (fromUpload || looksLikeNewAfterBoot);
       const userJustSelected = (Date.now() - LAST_USER_SELECT_AT) < 3000;
       const allowSelectFeature = AUTO_UPLOAD_SETTINGS.autoAnalyzeOnSelectMedia && selected && userJustSelected;
 
@@ -726,8 +845,13 @@
       try {
         chrome.storage.onChanged.addListener((changes, area) => {
           if (area !== "sync") return;
-          if (!changes || !changes.autoAnalyzeOnSelectMedia) return;
-          AUTO_UPLOAD_SETTINGS.autoAnalyzeOnSelectMedia = !!changes.autoAnalyzeOnSelectMedia.newValue;
+          if (!changes) return;
+          if (changes.autoAnalyzeOnSelectMedia) {
+            AUTO_UPLOAD_SETTINGS.autoAnalyzeOnSelectMedia = !!changes.autoAnalyzeOnSelectMedia.newValue;
+          }
+          if (changes.autoQueueModeVisible) {
+            AUTO_UPLOAD_SETTINGS.autoQueueModeVisible = changes.autoQueueModeVisible.newValue !== false;
+          }
         });
       } catch (_) {}
 
@@ -749,7 +873,7 @@
       };
 
       const existing = root.querySelectorAll("li.attachment[data-id]");
-      for (const el of existing) noteAttachmentMeta(el);
+      for (const el of existing) noteAttachmentMeta(el, { initial: true });
       scanAll();
 
       const obs = new MutationObserver((mutations) => {
@@ -757,14 +881,22 @@
           if (m.type === "childList") {
             for (const n of m.addedNodes) {
               if (!n || n.nodeType !== 1) continue;
+              const uploadSignal = nodeHasUploadSignal(n);
+              if (uploadSignal) markUploadSignal();
               const el = n.matches?.("li.attachment[data-id]") ? n : n.querySelector?.("li.attachment[data-id]");
               if (el) {
-                noteAttachmentMeta(el);
+                const info = noteAttachmentMeta(el);
+                if (uploadSignal) {
+                  if (info?.meta) info.meta.sawUploading = true;
+                }
                 maybeAutoProcessUploadedAttachment(el);
               }
               const all = n.querySelectorAll ? n.querySelectorAll("li.attachment[data-id]") : [];
               for (const li of all) {
-                noteAttachmentMeta(li);
+                const info = noteAttachmentMeta(li);
+                if (uploadSignal) {
+                  if (info?.meta) info.meta.sawUploading = true;
+                }
                 maybeAutoProcessUploadedAttachment(li);
               }
             }
