@@ -46,6 +46,16 @@
       </select>
       <div class="help">Ajusta automáticamente el tono y el enfoque SEO.</div>
     </div>
+    <div class="field">
+      <label for="sectionStyleProfile">Plantilla de estilo por sección</label>
+      <select id="sectionStyleProfile">
+        <option value="general">General</option>
+        <option value="review">Reviews / Análisis</option>
+        <option value="news">Noticias</option>
+        <option value="comparison">Comparativas</option>
+      </select>
+      <div class="help">Añade directrices editoriales por tipo de contenido para afinar los textos.</div>
+    </div>
   </div>
 
     <!-- PROVEEDOR -->
@@ -290,6 +300,13 @@
         Se usa cuando ejecutas análisis manual desde WordPress. La auto-subida mantiene su opción independiente.
       </div>
     </div>
+    <div class="field" style="margin-top:10px;">
+      <label style="display:flex; gap:10px; align-items:center;">
+        <input type="checkbox" id="secondPassQualityEnabled" style="width:auto; margin:0;" />
+        Segundo pase de calidad (post-procesado)
+      </label>
+      <div class="help">Hace una pasada adicional para limpiar y compactar ALT, title y leyenda sin cambiar la escena.</div>
+    </div>
     <div class="row" style="margin-top:10px;">
       <div class="field">
         <label for="captionSignaturePreset">Firma activa</label>
@@ -319,6 +336,22 @@
         Añadir firma en leyenda cuando se rellena automáticamente
       </label>
       <div class="help">Si está activado, la auto-generación/autorrelleno (auto-subida, lote y autopaste) añadirá también el texto de firma al final de la leyenda.</div>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <div class="field">
+        <label style="display:flex; gap:10px; align-items:center;">
+          <input type="checkbox" id="batchQaModeEnabled" style="width:auto; margin:0;" />
+          Modo QA de lote
+        </label>
+        <div class="help">En lote, solo aplica automáticamente si el semáforo SEO supera el umbral elegido.</div>
+      </div>
+      <div class="field">
+        <label for="batchQaMinLevel">Umbral mínimo de auto-aplicación</label>
+        <select id="batchQaMinLevel">
+          <option value="ok">Solo OK</option>
+          <option value="warning">OK o Mejorable</option>
+        </select>
+      </div>
     </div>
 
 
@@ -388,6 +421,9 @@
     <button id="clearHistory" class="secondary">Vaciar historial</button>
     <button id="copyDebug" class="secondary">Copiar diagnóstico</button>
     <button id="copySupport" class="secondary">Copiar soporte (diagnóstico + config)</button>
+    <button id="exportConfig" class="secondary">Exportar configuración</button>
+    <button id="importConfig" class="secondary">Importar configuración</button>
+    <input id="importConfigFile" type="file" accept="application/json,.json" style="display:none;" />
     <button id="clearDebug" class="secondary">Borrar diagnóstico</button>
     <button id="copyMetrics" class="secondary">Copiar métricas</button>
     <button id="clearMetrics" class="secondary">Borrar métricas</button>

@@ -4,6 +4,7 @@ import { normalizeEndpoint } from "./util.js";
 const els = {
   language: document.getElementById("language"),
   seoProfile: document.getElementById("seoProfile"),
+  sectionStyleProfile: document.getElementById("sectionStyleProfile"),
   wpAutoApply: document.getElementById("wpAutoApply"),
   wpAutoApplyRequireMedia: document.getElementById("wpAutoApplyRequireMedia"),
   wpAutoAnalyzeOnUpload: document.getElementById("wpAutoAnalyzeOnUpload"),
@@ -21,6 +22,7 @@ const els = {
   postValidationTitleMaxWords: document.getElementById("postValidationTitleMaxWords"),
   postValidationAltMinChars: document.getElementById("postValidationAltMinChars"),
   postValidationCaptionMinChars: document.getElementById("postValidationCaptionMinChars"),
+  secondPassQualityEnabled: document.getElementById("secondPassQualityEnabled"),
   onCompleteAction: document.getElementById("onCompleteAction"),
   onCompleteScope: document.getElementById("onCompleteScope"),
   historyLimit: document.getElementById("historyLimit"),
@@ -49,11 +51,16 @@ const els = {
   deleteSignature: document.getElementById("deleteSignature"),
   captionSignatureText: document.getElementById("captionSignatureText"),
   autoCaptionSignatureOnAutoFill: document.getElementById("autoCaptionSignatureOnAutoFill"),
+  batchQaModeEnabled: document.getElementById("batchQaModeEnabled"),
+  batchQaMinLevel: document.getElementById("batchQaMinLevel"),
   debugEnabled: document.getElementById("debugEnabled"),
   copyDebug: document.getElementById("copyDebug"),
   clearDebug: document.getElementById("clearDebug"),
   testConfig: document.getElementById("testConfig"),
   clearHistory: document.getElementById("clearHistory"),
+  exportConfig: document.getElementById("exportConfig"),
+  importConfig: document.getElementById("importConfig"),
+  importConfigFile: document.getElementById("importConfigFile"),
   historyEnabled: document.getElementById("historyEnabled"),
   copySupport: document.getElementById("copySupport"),
   copyMetrics: document.getElementById("copyMetrics"),
@@ -266,6 +273,13 @@ function updateAutoFuseUi() {
   els.autoUploadSafetyFuseMaxQueued.style.opacity = on ? "1" : "0.65";
 }
 
+function updateBatchQaUi() {
+  if (!els.batchQaModeEnabled || !els.batchQaMinLevel) return;
+  const on = !!els.batchQaModeEnabled.checked;
+  els.batchQaMinLevel.disabled = !on;
+  els.batchQaMinLevel.style.opacity = on ? "1" : "0.65";
+}
+
 function makeSignatureId() {
   try {
     if (crypto?.randomUUID) return crypto.randomUUID();
@@ -441,6 +455,7 @@ function getEffectiveModel(provider) {
   const syncCfg = await chrome.storage.sync.get({
     language: "es-ES",
     seoProfile: "blog",
+    sectionStyleProfile: "general",
     wpAutoApply: false,
     wpAutoApplyRequireMedia: true,
     wpAutoAnalyzeOnUpload: false,
@@ -458,6 +473,7 @@ function getEffectiveModel(provider) {
     postValidationTitleMaxWords: 8,
     postValidationAltMinChars: 0,
     postValidationCaptionMinChars: 0,
+    secondPassQualityEnabled: false,
     onCompleteAction: "none",
     onCompleteScope: "wp",
     historyLimit: 20,
@@ -476,6 +492,8 @@ function getEffectiveModel(provider) {
     activeCaptionSignatureId: "",
     contextMenuUseSignature: false,
     autoCaptionSignatureOnAutoFill: false,
+    batchQaModeEnabled: false,
+    batchQaMinLevel: "ok",
     debugEnabled: false,
     extensionEnabled: true,
     syncApiKey: false,
@@ -491,6 +509,7 @@ function getEffectiveModel(provider) {
   const cfg = { ...syncCfg, ...localCfg, apiKey: chosenApiKey };
     els.language.value = cfg.language;
     els.seoProfile.value = cfg.seoProfile;
+    if (els.sectionStyleProfile) els.sectionStyleProfile.value = String(cfg.sectionStyleProfile || "general");
     if (els.wpAutoApply) els.wpAutoApply.checked = !!cfg.wpAutoApply;
     if (els.wpAutoApplyRequireMedia) els.wpAutoApplyRequireMedia.checked = (cfg.wpAutoApplyRequireMedia !== undefined) ? !!cfg.wpAutoApplyRequireMedia : true;
     if (els.wpAutoAnalyzeOnUpload) els.wpAutoAnalyzeOnUpload.checked = !!cfg.wpAutoAnalyzeOnUpload;
@@ -513,6 +532,8 @@ function getEffectiveModel(provider) {
     if (els.contextMenuUseSignature) els.contextMenuUseSignature.checked = !!cfg.contextMenuUseSignature;
     renderSignatureUi();
     if (els.autoCaptionSignatureOnAutoFill) els.autoCaptionSignatureOnAutoFill.checked = !!cfg.autoCaptionSignatureOnAutoFill;
+    if (els.batchQaModeEnabled) els.batchQaModeEnabled.checked = !!cfg.batchQaModeEnabled;
+    if (els.batchQaMinLevel) els.batchQaMinLevel.value = String(cfg.batchQaMinLevel || "ok");
     if (els.debugEnabled) els.debugEnabled.checked = !!cfg.debugEnabled;
     if (els.syncApiKey) els.syncApiKey.checked = !!cfg.syncApiKey;
 
@@ -525,6 +546,7 @@ function getEffectiveModel(provider) {
     if (els.postValidationTitleMaxWords) els.postValidationTitleMaxWords.value = String(Number.isFinite(Number(cfg.postValidationTitleMaxWords)) ? Number(cfg.postValidationTitleMaxWords) : 8);
     if (els.postValidationAltMinChars) els.postValidationAltMinChars.value = String(Number.isFinite(Number(cfg.postValidationAltMinChars)) ? Number(cfg.postValidationAltMinChars) : 0);
     if (els.postValidationCaptionMinChars) els.postValidationCaptionMinChars.value = String(Number.isFinite(Number(cfg.postValidationCaptionMinChars)) ? Number(cfg.postValidationCaptionMinChars) : 0);
+    if (els.secondPassQualityEnabled) els.secondPassQualityEnabled.checked = !!cfg.secondPassQualityEnabled;
     if (els.onCompleteAction) els.onCompleteAction.value = String(cfg.onCompleteAction || "none");
     if (els.onCompleteScope) els.onCompleteScope.value = String(cfg.onCompleteScope || "wp");
     if (els.historyLimit) els.historyLimit.value = String(Number.isFinite(Number(cfg.historyLimit)) ? Number(cfg.historyLimit) : 20);
@@ -535,6 +557,7 @@ function getEffectiveModel(provider) {
     updateApiKeyHelpText();
     updateCaptionTemplateUi();
     updateAutoFuseUi();
+    updateBatchQaUi();
 
     if (!LOCAL_PROVIDERS.has(cfg.provider)) {
       const providerCfg = PROVIDERS[cfg.provider] || PROVIDERS.openai;
@@ -566,6 +589,7 @@ renderMetricsSummary();
 
 els.captionTemplateEnabled?.addEventListener("change", updateCaptionTemplateUi);
 els.autoUploadSafetyFuseEnabled?.addEventListener("change", updateAutoFuseUi);
+els.batchQaModeEnabled?.addEventListener("change", updateBatchQaUi);
 
 els.captionSignaturePreset?.addEventListener("change", () => {
   signatureState.activeId = String(els.captionSignaturePreset.value || "");
@@ -680,6 +704,7 @@ els.save.addEventListener("click", async () => {
   const syncPayload = {
     language: els.language.value,
     seoProfile: els.seoProfile.value,
+    sectionStyleProfile: String(els.sectionStyleProfile?.value || "general"),
     wpAutoApply: !!els.wpAutoApply?.checked,
     wpAutoApplyRequireMedia: !!els.wpAutoApplyRequireMedia?.checked,
     wpAutoAnalyzeOnUpload: !!els.wpAutoAnalyzeOnUpload?.checked,
@@ -709,6 +734,9 @@ els.save.addEventListener("click", async () => {
     postValidationTitleMaxWords: Number.isFinite(Number(els.postValidationTitleMaxWords?.value)) ? Number(els.postValidationTitleMaxWords.value) : 8,
     postValidationAltMinChars: Number.isFinite(Number(els.postValidationAltMinChars?.value)) ? Number(els.postValidationAltMinChars.value) : 0,
     postValidationCaptionMinChars: Number.isFinite(Number(els.postValidationCaptionMinChars?.value)) ? Number(els.postValidationCaptionMinChars.value) : 0,
+    secondPassQualityEnabled: !!els.secondPassQualityEnabled?.checked,
+    batchQaModeEnabled: !!els.batchQaModeEnabled?.checked,
+    batchQaMinLevel: String(els.batchQaMinLevel?.value || "ok"),
     onCompleteAction: String(els.onCompleteAction?.value || "none"),
     onCompleteScope: String(els.onCompleteScope?.value || "wp"),
     historyLimit: Number.isFinite(Number(els.historyLimit?.value)) ? Number(els.historyLimit.value) : 20,
@@ -769,6 +797,59 @@ els.clearHistory?.addEventListener("click", () => {
     els.status.textContent = "✔ Historial vaciado";
     setTimeout(() => (els.status.textContent = ""), 2000);
   });
+});
+
+els.exportConfig?.addEventListener("click", async () => {
+  try {
+    const syncCfg = await chrome.storage.sync.get(null);
+    const localCfg = await chrome.storage.local.get({ apiKey: "" });
+    const payload = {
+      version: (chrome.runtime.getManifest?.().version || "unknown"),
+      exportedAt: new Date().toISOString(),
+      sync: syncCfg || {},
+      local: {
+        apiKey: String(localCfg?.apiKey || "")
+      }
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `maca-config-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    setStatus("Configuración exportada.");
+  } catch (_) {
+    setStatus("No se pudo exportar la configuración.");
+  }
+});
+
+els.importConfig?.addEventListener("click", () => {
+  els.importConfigFile?.click();
+});
+
+els.importConfigFile?.addEventListener("change", async () => {
+  const file = els.importConfigFile?.files?.[0];
+  if (!file) return;
+  try {
+    const txt = await file.text();
+    const parsed = JSON.parse(txt);
+    if (!parsed || typeof parsed !== "object" || typeof parsed.sync !== "object") {
+      throw new Error("Formato inválido");
+    }
+    await pSet("sync", parsed.sync || {});
+    if (parsed.local && typeof parsed.local === "object" && typeof parsed.local.apiKey === "string") {
+      await pSet("local", { apiKey: parsed.local.apiKey });
+    }
+    setStatus("Configuración importada. Recargando...", { timeoutMs: 1200 });
+    setTimeout(() => location.reload(), 1300);
+  } catch (_) {
+    setStatus("No se pudo importar el JSON.");
+  } finally {
+    if (els.importConfigFile) els.importConfigFile.value = "";
+  }
 });
 
 els.reset.addEventListener("click", () => {
