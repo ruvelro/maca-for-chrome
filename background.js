@@ -363,17 +363,26 @@ function buildOpenAICompatUrl(endpoint) {
   return `${ep}/v1/chat/completions`;
 }
 
-async function safeJson(res) {
+async function safeJson(res, timeoutMs = 30000) {
+  const ms = Math.max(1000, Number(timeoutMs) || 30000);
+  let id = null;
+  const timer = new Promise((_, reject) => {
+    id = setTimeout(() => reject(new Error(`Timeout leyendo respuesta del proveedor (${ms} ms).`)), ms);
+  });
+  let txt = "";
   try {
-    return await res.json();
+    txt = await Promise.race([res.text(), timer]);
+  } catch (err) {
+    throw new Error(err?.message || "Timeout leyendo respuesta del proveedor.");
+  } finally {
+    if (id) clearTimeout(id);
+  }
+  const body = String(txt || "").trim();
+  if (!body) return {};
+  try {
+    return JSON.parse(body);
   } catch (_) {
-    try {
-      const txt = await res.text();
-      return { message: txt };
-    } catch (__)
-    {
-      return {};
-    }
+    return { message: body };
   }
 }
 
@@ -879,6 +888,48 @@ function shouldFallbackOpenRouterCompatibility(status, json) {
     msg.includes("unsupported parameter") ||
     msg.includes("invalid parameter")
   );
+}
+
+function isRetriableOpenRouterStatus(status) {
+  return status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
+}
+
+function trimErrorText(v, maxLen = 260) {
+  const s = String(v == null ? "" : v).replace(/\s+/g, " ").trim();
+  if (!s) return "";
+  return s.length > maxLen ? `${s.slice(0, maxLen)}...` : s;
+}
+
+function extractOpenRouterErrorMessage(status, json) {
+  const parts = [];
+  const base = trimErrorText(json?.error?.message || json?.error || json?.message || "");
+  if (base) parts.push(base);
+
+  const code = trimErrorText(json?.error?.code || json?.code || "");
+  if (code) parts.push(`code=${code}`);
+
+  const provider = trimErrorText(
+    json?.error?.metadata?.provider_name ||
+    json?.provider ||
+    json?.error?.provider ||
+    ""
+  );
+  if (provider) parts.push(`provider=${provider}`);
+
+  const upstream = trimErrorText(
+    json?.error?.metadata?.raw ||
+    json?.error?.metadata?.upstream_error ||
+    json?.error?.metadata?.cause ||
+    ""
+  );
+  if (upstream) parts.push(`upstream=${upstream}`);
+
+  if (parts.length) return parts.join(" | ");
+  return `Error OpenRouter (${status})`;
+}
+
+async function sleepMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 }
 
 function countWords(s) {
@@ -1498,7 +1549,7 @@ async function analyzeImage({
       "X-Title": "maca for Chrome"
     };
 
-    const makeBody = ({ withDocsParams = true, withSchema = true } = {}) => {
+    const makeBody = ({ withDocsParams = true, withSchema = true, forceAllowFallbacks = false } = {}) => {
       const body = {
         model,
         messages: [
@@ -1516,6 +1567,9 @@ async function analyzeImage({
       if (useGlmModel && withDocsParams) {
         body.provider = { allow_fallbacks: false, require_parameters: true };
         body.reasoning = { exclude: true, effort: "none" };
+      } else if (useGlmModel && forceAllowFallbacks) {
+        // Last-resort compatibility mode: let OpenRouter reroute if one upstream provider is unstable.
+        body.provider = { allow_fallbacks: true };
       }
       if (withSchema) {
         if (mode === "alt") {
@@ -1577,24 +1631,55 @@ async function analyzeImage({
     const attempts = [
       { withDocsParams: true, withSchema: true },
       { withDocsParams: true, withSchema: false },
-      { withDocsParams: false, withSchema: false }
+      { withDocsParams: false, withSchema: false },
+      { withDocsParams: false, withSchema: false, forceAllowFallbacks: true }
     ];
+    const openRouterStartedAt = Date.now();
+    const OPENROUTER_MAX_TOTAL_MS = 90000;
     let res = null;
     let json = null;
+    let lastErrMsg = "";
     for (let i = 0; i < attempts.length; i++) {
+      if ((Date.now() - openRouterStartedAt) > OPENROUTER_MAX_TOTAL_MS) {
+        throw new Error("Timeout global OpenRouter (90s).");
+      }
       const attempt = attempts[i];
       res = await fetchWithTimeout("https://openrouter.ai/api/v1/chat/completions", requestOptions({
         method: "POST",
         headers,
         body: JSON.stringify(makeBody(attempt))
-      }));
-      json = await safeJson(res);
+      }), 30000);
+      try {
+        json = await safeJson(res, 25000);
+      } catch (err) {
+        lastErrMsg = err?.message || "Timeout leyendo respuesta de OpenRouter.";
+        await addDebugLog(cfg, "openrouter_response_read_error", {
+          attempt: i + 1,
+          attemptConfig: attempt,
+          status: Number(res?.status || 0),
+          error: lastErrMsg
+        });
+        if (i < attempts.length - 1) {
+          await sleepMs(300 + (i * 250));
+          continue;
+        }
+        throw new Error(lastErrMsg);
+      }
       if (res.ok) break;
+      lastErrMsg = extractOpenRouterErrorMessage(res.status, json);
+      await addDebugLog(cfg, "openrouter_attempt_fail", {
+        attempt: i + 1,
+        attemptConfig: attempt,
+        status: Number(res?.status || 0),
+        error: lastErrMsg
+      });
       const canFallback = shouldFallbackOpenRouterCompatibility(res.status, json);
-      if (!canFallback || i >= attempts.length - 1) break;
+      const retriable = isRetriableOpenRouterStatus(res.status) || /provider returned error/i.test(lastErrMsg);
+      if ((!canFallback && !retriable) || i >= attempts.length - 1) break;
+      await sleepMs(250 + (i * 200));
     }
     if (!res.ok) {
-      throw new Error(json?.error?.message || json?.error || json?.message || "Error OpenRouter");
+      throw new Error(lastErrMsg || extractOpenRouterErrorMessage(res?.status || 0, json));
     }
     rawOutput = pickTextFromOpenAICompat(json);
   } else if (cfg.provider === "anthropic") {
@@ -2011,12 +2096,19 @@ async function testCurrentConfig() {
       },
       body: JSON.stringify({
         model,
-        messages: [{ role: "user", content: "ping" }],
-        max_tokens: 1
+        messages: [{
+          role: "user",
+          content: [
+            { type: "text", text: "Responde solo con: ok" },
+            { type: "image_url", image_url: { url: "data:image/gif;base64,R0lGODlhAQABAAAAACwAAAAAAQABAAA=" } }
+          ]
+        }],
+        max_tokens: 4,
+        temperature: 0
       })
     }, 12000);
-    const json = await safeJson(res);
-    if (!res.ok) throw new Error(json?.error?.message || json?.error || json?.message || "Error OpenRouter al validar.");
+    const json = await safeJson(res, 20000);
+    if (!res.ok) throw new Error(extractOpenRouterErrorMessage(res.status, json));
     return okRes({ endpoint: "https://openrouter.ai/api/v1/chat/completions" });
   }
 
@@ -2123,6 +2215,30 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
   if (msg.type === "MACA_GET_SESSION_CONTEXT") {
     const tabId = sender?.tab?.id;
     sendResponse({ ok: true, context: getSessionContextForTab(tabId) });
+    return true;
+  }
+
+  if (msg.type === "MACA_GET_ACTIVE_SIGNATURE") {
+    (async () => {
+      try {
+        const cfg = await getConfigCached();
+        const list = normalizeSignatureList(cfg?.captionSignatures, cfg?.captionSignatureText);
+        if (!list.length) {
+          sendResponse({ ok: true, text: "", id: "", name: "" });
+          return;
+        }
+        const activeId = String(cfg?.activeCaptionSignatureId || "").trim();
+        const active = list.find((x) => x.id === activeId) || list[0];
+        sendResponse({
+          ok: true,
+          text: String(active?.text || "").trim(),
+          id: String(active?.id || ""),
+          name: String(active?.name || "")
+        });
+      } catch (err) {
+        sendResponse({ ok: false, error: err?.message || String(err), text: "", id: "", name: "" });
+      }
+    })();
     return true;
   }
 

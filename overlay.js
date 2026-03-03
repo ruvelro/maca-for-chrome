@@ -7,6 +7,7 @@
   const STYLE_ID = "maca-overlay-styles";
   const FEEDBACK_MS = 900;
   const MIN_LOADING_MS = 350; // ensures at least a visible loading phase (especially in WordPress)
+  const MAX_LOADING_MS = 95000; // avoid infinite loading states
 
   // Remove previous listener if any (avoid mixed versions in same tab)
   try {
@@ -37,6 +38,7 @@
     batchCancelBtn: null,
     autoUploadPauseBtn: null,
     autoUploadCancelBtn: null,
+    addSignatureBtn: null,
     styleTechBtn: null,
     styleShortBtn: null,
     styleEditorialBtn: null
@@ -68,7 +70,8 @@
     autoUploadRunning: false,
     autoUploadCancelling: false,
     autoUploadPaused: false,
-    sessionContextTimer: null
+    sessionContextTimer: null,
+    loadingWatchdogTimer: null
   };
 
   function injectStyles() {
@@ -433,6 +436,24 @@
     }
   }
 
+  function clearLoadingWatchdog() {
+    if (STATE.loadingWatchdogTimer) {
+      clearTimeout(STATE.loadingWatchdogTimer);
+      STATE.loadingWatchdogTimer = null;
+    }
+  }
+
+  function armLoadingWatchdog() {
+    clearLoadingWatchdog();
+    STATE.loadingWatchdogTimer = setTimeout(() => {
+      if (STATE.status !== "loading") return;
+      handleError({
+        jobId: STATE.jobId,
+        error: "Tiempo de espera agotado durante la generación. Reintenta o cambia de proveedor/modelo."
+      });
+    }, MAX_LOADING_MS);
+  }
+
   function scheduleAutoApply() {
     clearAutoApplyTimer();
     if (!STATE.wpAutoApply) return;
@@ -479,6 +500,7 @@
   function closeAll() {
     clearApplyTimer();
     clearAutoApplyTimer();
+    clearLoadingWatchdog();
     STATE.jobId = null;
     STATE.imgUrl = "";
     STATE.pageUrl = "";
@@ -762,6 +784,37 @@ async function copyText(text, btn, label) {
     return { alt, title, leyenda };
   }
 
+  function normalizeInlineText(text) {
+    return String(text || "").replace(/\s+/g, " ").trim();
+  }
+
+  function appendSignatureToCaption(caption, signature) {
+    const base = normalizeInlineText(caption);
+    const sign = normalizeInlineText(signature);
+    if (!sign) return { caption: base, added: false, reason: "empty_signature" };
+
+    const baseCmp = base.toLocaleLowerCase("es-ES").replace(/[.!?…]+$/g, "").trim();
+    const signCmp = sign.toLocaleLowerCase("es-ES").replace(/[.!?…]+$/g, "").trim();
+    if (baseCmp && signCmp && baseCmp.endsWith(signCmp)) {
+      return { caption: base, added: false, reason: "already_present" };
+    }
+
+    const joiner = base ? (/[.!?…]$/.test(base) ? " " : ". ") : "";
+    return { caption: `${base}${joiner}${sign}`.trim(), added: true };
+  }
+
+  async function getActiveSignatureFromConfig() {
+    try {
+      const res = await chrome.runtime.sendMessage({ type: "MACA_GET_ACTIVE_SIGNATURE" });
+      return {
+        text: String(res?.text || "").trim(),
+        name: String(res?.name || "").trim()
+      };
+    } catch (_) {
+      return { text: "", name: "" };
+    }
+  }
+
 
 function isWpAdminPage() {
   try {
@@ -902,6 +955,7 @@ Leyenda: ${c}`);
     STATE.pendingResult = null;
     STATE.loadingSince = Date.now();
     STATE.firstPaintDone = false;
+    armLoadingWatchdog();
     updateUI();
     try {
       const res = await chrome.runtime.sendMessage({
@@ -1004,6 +1058,7 @@ Leyenda: ${c}`);
               <button id="maca-copy-alt">Copiar ALT</button>
               <button id="maca-copy-title">Copiar title</button>
               <button id="maca-copy-cap">Copiar leyenda</button>
+              <button id="maca-add-signature">Añadir firma</button>
               <button id="maca-copy-both" class="primary">Copiar todo</button>
             </div>
           </div>
@@ -1025,6 +1080,7 @@ Leyenda: ${c}`);
     UI.batchCancelBtn = overlay.querySelector("#maca-batch-cancel");
     UI.autoUploadPauseBtn = overlay.querySelector("#maca-auto-pause");
     UI.autoUploadCancelBtn = overlay.querySelector("#maca-auto-cancel");
+    UI.addSignatureBtn = overlay.querySelector("#maca-add-signature");
     UI.styleTechBtn = overlay.querySelector("#maca-style-tech");
     UI.styleShortBtn = overlay.querySelector("#maca-style-short");
     UI.styleEditorialBtn = overlay.querySelector("#maca-style-editorial");
@@ -1168,6 +1224,36 @@ Leyenda: ${c}`);
       copyText(leyenda, e.currentTarget, "Copiar leyenda");
       applyToWordPressFields({ leyenda });
     });
+    UI.addSignatureBtn?.addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      const { leyenda } = getCurrentOverlayTexts();
+      const { text: signatureText, name: signatureName } = await getActiveSignatureFromConfig();
+      if (!signatureText) {
+        if (UI.statusBox) {
+          const txt = UI.statusBox.querySelector(".status-text");
+          if (txt) txt.textContent = "No hay firma activa configurada.";
+        }
+        setButtonFeedback(btn, { ok: false, label: "Añadir firma" });
+        return;
+      }
+      const out = appendSignatureToCaption(leyenda, signatureText);
+      if (!out.added) {
+        if (UI.statusBox) {
+          const txt = UI.statusBox.querySelector(".status-text");
+          if (txt) txt.textContent = out.reason === "already_present" ? "La firma ya estaba añadida." : "No se pudo añadir la firma.";
+        }
+        setButtonFeedback(btn, { ok: false, label: "Añadir firma" });
+        return;
+      }
+      STATE.leyenda = out.caption;
+      if (UI.capArea) UI.capArea.value = out.caption;
+      applyToWordPressFields({ leyenda: out.caption });
+      if (UI.statusBox) {
+        const txt = UI.statusBox.querySelector(".status-text");
+        if (txt) txt.textContent = signatureName ? `Firma añadida: ${signatureName}.` : "Firma añadida en la leyenda.";
+      }
+      setButtonFeedback(btn, { ok: true, label: "Añadir firma" });
+    });
     overlay.querySelector("#maca-copy-both").addEventListener("click", (e) => {
       const { alt, title, leyenda } = getCurrentOverlayTexts();
       STATE.alt = alt;
@@ -1261,6 +1347,7 @@ Leyenda: ${c}`);
 	      const btnAlt = UI.overlay.querySelector("#maca-copy-alt");
 	      const btnTitle = UI.overlay.querySelector("#maca-copy-title");
 	      const btnCap = UI.overlay.querySelector("#maca-copy-cap");
+      const btnAddSignature = UI.addSignatureBtn;
       const btnBoth = UI.overlay.querySelector("#maca-copy-both");
       const btnRegen = UI.overlay.querySelector("#maca-regenerate");
       const btnStyleTech = UI.styleTechBtn;
@@ -1292,9 +1379,10 @@ Leyenda: ${c}`);
 	      if (btnAlt) btnAlt.style.display = showAlt ? "" : "none";
 	      if (btnTitle) btnTitle.style.display = showTitle ? "" : "none";
 	      if (btnCap) btnCap.style.display = showCap ? "" : "none";
+      if (btnAddSignature) btnAddSignature.style.display = showCap ? "" : "none";
 	      if (btnBoth) btnBoth.style.display = (showAlt && showCap) ? "" : "none";
 
-	      [btnAlt, btnTitle, btnCap, btnBoth].forEach((b) => {
+	      [btnAlt, btnTitle, btnCap, btnAddSignature, btnBoth].forEach((b) => {
 	        if (!b) return;
 	        if (b.dataset.macaFeedback === "1") return;
 	        b.disabled = !isReady;
@@ -1343,6 +1431,7 @@ Leyenda: ${c}`);
     STATE.seoReview = seoReview || null;
     STATE.status = "ready";
     STATE.error = "";
+    clearLoadingWatchdog();
     updateUI();
 
 	    // Optional: auto-fill WordPress fields as soon as we have a result.
@@ -1375,6 +1464,7 @@ Leyenda: ${c}`);
   function handleOpen({ jobId, imgUrl, pageUrl, sessionContext, generateMode, wpAutoApply, wpAutoApplyRequireMedia, onCompleteAction }) {
     clearApplyTimer();
 	    clearAutoApplyTimer();
+    clearLoadingWatchdog();
     STATE.jobId = jobId;
     STATE.imgUrl = imgUrl || "";
     STATE.pageUrl = pageUrl || "";
@@ -1392,6 +1482,7 @@ Leyenda: ${c}`);
     STATE.loadingSince = Date.now();
     STATE.firstPaintDone = false;
     STATE.pendingResult = null;
+    armLoadingWatchdog();
 
     removeMini();
     showOverlay();
@@ -1475,6 +1566,7 @@ function handleProgress(msg) {
   function handleError({ jobId, error }) {
     if (STATE.jobId && jobId && jobId !== STATE.jobId) return;
     clearApplyTimer();
+    clearLoadingWatchdog();
     STATE.pendingResult = null;
     STATE.status = "error";
     STATE.batchRunning = false;
