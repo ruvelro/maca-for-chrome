@@ -1,13 +1,12 @@
 {
   "manifest_version": 3,
-  "name": "maca for Chrome",
+  "name": "maca for Firefox",
   "short_name": "maca",
   "version": "1.0.7",
   "description": "maca (Media ALT & Caption AI) - Generate ALT, title and caption for WordPress media with AI (OpenAI/Gemini/OpenRouter).",
   "permissions": [
     "clipboardWrite",
     "contextMenus",
-    "offscreen",
     "scripting",
     "storage"
   ],
@@ -16,7 +15,9 @@
     "*://*/*wp-content/*"
   ],
   "background": {
-    "service_worker": "background.js",
+    "scripts": [
+      "background.js"
+    ],
     "type": "module"
   },
   "content_scripts": [
@@ -56,5 +57,11 @@
     "32": "icons/icon32.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "maca-for-firefox@softzone.local",
+      "strict_min_version": "128.0"
+    }
   }
 }

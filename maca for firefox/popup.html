@@ -1,0 +1,50 @@
+﻿<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>maca</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand">maca</div>
+    <div class="actions">
+      <button id="openOptions" class="btn" title="Abrir ajustes">Ajustes</button>
+      <button id="clearHistory" class="btn" title="Vaciar historial">Vaciar</button>
+    </div>
+  </header>
+
+  <section class="quick">
+    <label class="toggle"><input id="quickEnabled" type="checkbox" /> Extension activa</label>
+    <label class="toggle"><input id="quickUseSignature" type="checkbox" /> Anadir firma en analisis manual</label>
+    <label class="toggle"><input id="quickAutoUpload" type="checkbox" /> Auto-generar al subir varias (experimental)</label>
+    <div class="quick-row">
+      <label for="quickSignaturePreset">Firma activa</label>
+      <select id="quickSignaturePreset"></select>
+    </div>
+    <div class="quick-row">
+      <button id="openOptionsAdvanced" class="btn">Ajustes avanzados</button>
+    </div>
+  </section>
+
+  <div class="search">
+    <input id="q" type="search" placeholder="Buscar en el historial..." />
+    <div id="historyInfo" class="history-info"></div>
+  </div>
+
+  <main>
+    <div id="empty" class="empty" hidden>No hay elementos en el historial.</div>
+    <div id="list" class="list"></div>
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <footer class="footer">
+    <a id="openPrivacy" href="#" class="footer-link">Privacidad</a>
+  </footer>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
+
