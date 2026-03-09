@@ -92,7 +92,7 @@
 
       #maca-panel {
         width: 100%;
-        max-width: 720px;
+        max-width: 1100px;
         background: #fff;
         border-radius: 16px;
         box-shadow: 0 24px 60px rgba(0,0,0,.30);
@@ -132,8 +132,8 @@
       #maca-panel .body {
         padding: 16px;
         display: grid;
-        grid-template-columns: 220px 1fr;
-        gap: 16px;
+        grid-template-columns: 280px minmax(0, 1fr);
+        gap: 18px;
       }
 
       #maca-panel .preview-col {
@@ -142,11 +142,20 @@
         gap: 12px;
       }
       #maca-panel .preview-actions {
-        justify-content: center;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         margin-top: 0;
+      }
+      #maca-panel .preview-actions button {
+        width: 100%;
       }
       #maca-panel .content-col {
         min-width: 0;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        column-gap: 16px;
+        row-gap: 0;
+        align-content: start;
       }
 
       #maca-panel .preview {
@@ -157,8 +166,8 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        min-height: 160px;
-        max-height: 260px;
+        min-height: 220px;
+        max-height: 280px;
         position: relative;
       }
 
@@ -217,6 +226,7 @@
         background: #f3f4f6;
         display: flex;
         align-items: center;
+        flex-wrap: wrap;
         gap: 8px;
         box-sizing: border-box;
       }
@@ -269,11 +279,26 @@
         margin-bottom: 6px;
         color: #111827;
       }
+      #maca-panel #maca-session-context,
+      #maca-panel .subhelp,
+      #maca-panel #maca-cap,
+      #maca-panel #maca-cap-label,
+      #maca-panel .copy-actions {
+        grid-column: 1 / -1;
+      }
+      #maca-panel #maca-alt-label,
+      #maca-panel #maca-alt {
+        grid-column: 1;
+      }
+      #maca-panel #maca-title-label,
+      #maca-panel #maca-title {
+        grid-column: 2;
+      }
 
       /* text fade-in */
       #maca-panel textarea {
         width: 100%;
-        min-height: 72px;
+        min-height: 86px;
         resize: vertical;
         padding: 10px 12px;
         border-radius: 12px;
@@ -283,6 +308,9 @@
         box-sizing: border-box;
         opacity: 0;
         transition: opacity 0.25s ease;
+      }
+      #maca-panel #maca-cap {
+        min-height: 96px;
       }
       #maca-panel textarea.ready { opacity: 1; }
       #maca-panel textarea[disabled] { background: #f9fafb; color: #6b7280; }
@@ -327,6 +355,15 @@
       #maca-panel .actions button.primary:hover {
         background: #1d4ed8;
         border-color: #1d4ed8;
+      }
+      #maca-panel .copy-actions {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 10px;
+        align-items: stretch;
+      }
+      #maca-panel .copy-actions button {
+        width: 100%;
       }
 
       /* copy feedback */
@@ -387,9 +424,21 @@
         border-color: #1d4ed8;
       }
 
-      @media (max-width: 680px) {
+      @media (max-width: 980px) {
         #maca-panel .body { grid-template-columns: 1fr; }
+        #maca-panel .content-col { grid-template-columns: 1fr; }
+        #maca-panel #maca-alt-label,
+        #maca-panel #maca-alt,
+        #maca-panel #maca-title-label,
+        #maca-panel #maca-title {
+          grid-column: 1 / -1;
+        }
+      }
+
+      @media (max-width: 680px) {
         #maca-panel .preview { max-height: 240px; }
+        #maca-panel .preview-actions { grid-template-columns: 1fr; }
+        #maca-panel .copy-actions { grid-template-columns: 1fr; }
       }
     `;
     if (!style.parentNode) document.head.appendChild(style);
