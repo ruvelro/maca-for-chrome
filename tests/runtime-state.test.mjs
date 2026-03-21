@@ -7,22 +7,51 @@ import {
   __autoUploadPendingIdsByTab,
   __autoUploadSeenByTab,
   __autoUploadStatsByTab,
+  __manualJobsByTab,
   __sessionContextByTab,
   clearTabRuntimeState,
   dequeueAutoPendingId,
   enqueueAutoPendingId,
   forgetAutoUploadJob,
+  forgetManualJob,
   getAutoUploadStats,
+  getPersistedManualJob,
   hydrateRuntimeState,
   markAutoProcessed,
   normalizeRuntimeSnapshotForStorage,
   rememberAutoUploadJob,
+  rememberManualJob,
   serializeRuntimeState,
   wasRecentlyAutoProcessed
 } from "../src/shared/background/runtime-state.js";
 
 test.afterEach(() => {
   hydrateRuntimeState(null);
+});
+
+test("runtime state stores and restores manual jobs", () => {
+  const tabId = 77;
+  rememberManualJob(tabId, {
+    jobId: "manual-1",
+    source: "overlay_manual",
+    imageUrl: "https://example.com/manual.jpg",
+    filenameContext: "manual.jpg",
+    pageUrl: "https://site.test/wp-admin/upload.php",
+    withCaptionSignature: true,
+    styleOverride: "technical"
+  });
+
+  const snapshot = normalizeRuntimeSnapshotForStorage(serializeRuntimeState());
+  hydrateRuntimeState(null);
+  hydrateRuntimeState(snapshot);
+
+  const restored = getPersistedManualJob(tabId);
+  assert.equal(restored.jobId, "manual-1");
+  assert.equal(restored.source, "overlay_manual");
+  assert.equal(restored.withCaptionSignature, true);
+
+  forgetManualJob(tabId);
+  assert.equal(__manualJobsByTab.has(tabId), false);
 });
 
 test("runtime state serializes and hydrates auto-upload data", () => {

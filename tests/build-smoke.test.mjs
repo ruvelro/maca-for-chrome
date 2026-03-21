@@ -24,8 +24,8 @@ test("shared build generator refreshes both browser outputs", () => {
   assert.equal(fs.existsSync(path.join(root, "maca for firefox", "background", "config.js")), true);
 
   assert.equal(chromeManifest.content_scripts[0].js[0], "wp_dom_shared.js");
-  assert.equal(chromeManifest.version, "1.0.8");
+  assert.equal(chromeManifest.version, "1.0.9");
   assert.equal(firefoxManifest.content_scripts[0].js[0], "wp_dom_shared.js");
-  assert.equal(firefoxManifest.version, "1.0.8");
+  assert.equal(firefoxManifest.version, "1.0.9");
   assert.match(chromeBackground, /AUTO-GENERATED FILE/);
 });

@@ -47,6 +47,9 @@ import {
   updateBatchJobProgress,
   forgetBatchJob,
   getPersistedBatchJob,
+  rememberManualJob,
+  forgetManualJob,
+  getPersistedManualJob,
   clearTabRuntimeState,
   serializeRuntimeState,
   hydrateRuntimeState,
@@ -58,6 +61,17 @@ import {
   isOpenRouterGlm,
   getOpenRouterGlmQualityPrompt
 } from "./providers/index.js";
+import { ensureOverlayInjected, sendOverlay } from "./background/overlay-runtime.js";
+import { runOverlayAnalysisJob, resumePersistedManualJobs } from "./background/manual-jobs.js";
+import {
+  normalizeTitleText,
+  ensureTrailingPeriod,
+  ensureAltTrailingPeriodWithinLimit,
+  buildSeoReview,
+  runSecondPassQuality,
+  passesBatchQa,
+  applyPostValidation
+} from "./background/quality.js";
 
 initConfigCache();
 
@@ -349,34 +363,6 @@ function getSpanishLocaleGuard(lang) {
   return "\nIdioma obligatorio: español de España (es-ES). Usa terminología de España y evita variantes regionales latinoamericanas.\n";
 }
 
-function normalizeTitleText(title, { minWords = 2, maxWords = 8 } = {}) {
-  let s = normalizeCaptionText(title || "");
-  if (!s) return "";
-  const words = s.split(/\s+/).filter(Boolean);
-  if (!words.length) return "";
-  if (words.length > Math.max(1, maxWords)) {
-    s = words.slice(0, Math.max(1, maxWords)).join(" ");
-  }
-  return s.trim();
-}
-
-function ensureTrailingPeriod(text) {
-  const s = String(text || "").trim();
-  if (!s) return "";
-  if (/[.!?…]$/.test(s)) return s;
-  return `${s}.`;
-}
-
-function ensureAltTrailingPeriodWithinLimit(text, maxLen) {
-  let s = String(text || "").trim();
-  if (!s) return "";
-  if (/[.!?…]$/.test(s)) return s;
-  const n = Number(maxLen);
-  if (Number.isFinite(n) && n > 0 && (s.length + 1) > n) {
-    s = s.slice(0, Math.max(0, n - 1)).trim();
-  }
-  return `${s}.`;
-}
 
 // =========================
 // Clipboard helper (offscreen document)
@@ -558,54 +544,26 @@ if (chrome?.commands?.onCommand?.addListener) {
         });
         return;
       }
-
-      // Show overlay immediately (loading state)
-      await ensureOverlayInjected(tabId);
-      await sendOverlay(tabId, {
-        type: "MACA_OVERLAY_OPEN",
+      await runOverlayAnalysisJob({
         jobId,
-        imgUrl,
+        tabId,
         pageUrl,
-        sessionContext: getSessionContextForTab(tabId),
-        generateMode: String(cfg.generateMode || "both"),
-        wpAutoApply: !!cfg.wpAutoApply,
-        wpAutoApplyRequireMedia: !!cfg.wpAutoApplyRequireMedia,
-        autoCaptionSignatureOnAutoFill: !!cfg.autoCaptionSignatureOnAutoFill,
-        onCompleteAction: resolveOnCompleteAction(cfg, pageUrl)
+        imgUrl,
+        filenameContext,
+        source: "shortcut",
+        withCaptionSignature: !!cfg.contextMenuUseSignature,
+        rememberManualJob,
+        forgetManualJob,
+        scheduleRuntimeStatePersist,
+        getConfigCached,
+        getSessionContextForTab,
+        resolveOnCompleteAction,
+        ensureOverlayInjected,
+        sendOverlay,
+        analyzeImage,
+        addMetricsSample,
+        logJobEvent
       });
-
-      try {
-        const { alt, title, leyenda, seoReview, decorativa } = await analyzeImage({
-          imageUrl: imgUrl,
-          filenameContext,
-          pageUrl,
-          tabId,
-          withCaptionSignature: !!cfg.contextMenuUseSignature,
-          source: "shortcut"
-        });
-
-        await sendOverlay(tabId, {
-          type: "MACA_OVERLAY_RESULT",
-          jobId,
-          alt,
-          title,
-          leyenda,
-          seoReview
-        });
-      } catch (err) {
-        await addMetricsSample(cfg, {
-          ok: false,
-          ms: 0,
-          mode: String(cfg.generateMode || "both"),
-          source: "shortcut",
-          error: err?.message || String(err)
-        });
-        await sendOverlay(tabId, {
-          type: "MACA_OVERLAY_ERROR",
-          jobId,
-          error: err?.message || String(err)
-        });
-      }
     })();
   });
 }
@@ -620,6 +578,10 @@ async function sendAutoUploadProgress(tabId, payload) {
       ...(base || {})
     });
   } catch (_) {}
+}
+
+async function logJobEvent(cfg, event, data = {}) {
+  await addDebugLog(cfg, event, data);
 }
 
 function finalizeAutoUploadTabState(tabId) {
@@ -753,15 +715,16 @@ async function processAutoUploadAttachmentRequest({
         restored
       });
 
-      const out = await analyzeImage({
-        imageUrl,
-        filenameContext,
-        pageUrl,
-        tabId,
-        modeOverride: "both",
-        withCaptionSignature: !!cfg.autoCaptionSignatureOnAutoFill,
-        source: restored ? "auto_upload_resume" : "auto_upload"
-      });
+          const out = await analyzeImage({
+            imageUrl,
+            filenameContext,
+            pageUrl,
+            tabId,
+            modeOverride: "both",
+            withCaptionSignature: !!cfg.autoCaptionSignatureOnAutoFill,
+            source: restored ? "auto_upload_resume" : "auto_upload",
+            jobId: `auto:${attachmentId}`
+          });
 
       if (__autoUploadCancelByTab.get(tabId) === true) throw new Error("AUTO_UPLOAD_CANCELLED");
 
@@ -775,6 +738,14 @@ async function processAutoUploadAttachmentRequest({
         requireMedia: true
       };
       const applied = await autoApplyAttachmentWithRetry(tabId, applyPayload, { attempts: 12, delayMs: 220 });
+      await logJobEvent(cfg, "auto_upload_apply_result", {
+        jobId: `auto:${attachmentId}`,
+        phase: "apply",
+        attachmentId,
+        ok: applied.ok,
+        applyDetails: applied.response?.applyDetails || null,
+        missing: applied.response?.missing || []
+      });
       if (!applied.ok) throw new Error("No se pudo aplicar el resultado en los campos de Medios.");
 
       if (cfg.autoDeselectProcessedOnAutoFill) {
@@ -963,7 +934,8 @@ async function processBatchJob({ tabId, pageUrl, items, startIndex = 0, qaSkippe
           tabId,
           withCaptionSignature: !!cfg.autoCaptionSignatureOnAutoFill || !!cfg.contextMenuUseSignature,
           abortSignal: __batchAbortByTab.get(tabId)?.signal || null,
-          source: restored ? "batch_resume" : "batch"
+          source: restored ? "batch_resume" : "batch",
+          jobId: `batch:${attachmentId}`
         });
         results.push({ attachmentId, ...out, imageUrl });
 
@@ -992,6 +964,14 @@ async function processBatchJob({ tabId, pageUrl, items, startIndex = 0, qaSkippe
             requireMedia: (cfg.wpAutoApplyRequireMedia !== undefined) ? !!cfg.wpAutoApplyRequireMedia : true
           };
           const applied = await autoApplyAttachmentWithRetry(tabId, applyPayload, { attempts: 12, delayMs: 220 });
+          await logJobEvent(cfg, "batch_apply_result", {
+            jobId: `batch:${attachmentId}`,
+            phase: "apply",
+            attachmentId,
+            ok: applied.ok,
+            applyDetails: applied.response?.applyDetails || null,
+            missing: applied.response?.missing || []
+          });
           if (!applied.ok) throw new Error("No se pudo aplicar el resultado en los campos de Medios.");
           updateBatchJobProgress(tabId, { currentIndex: i + 1, qaSkipped });
           scheduleRuntimeStatePersist();
@@ -1042,179 +1022,6 @@ async function resumePersistedBatchJobs() {
     __batchAbortByTab.set(tabId, new AbortController());
     await processBatchJob({ tabId, restored: true, ...job });
   }
-}
-
-function countWords(s) {
-  const t = String(s || "").trim();
-  if (!t) return 0;
-  return t.split(/\s+/).filter(Boolean).length;
-}
-
-function isGenericText(s) {
-  const t = String(s || "").trim().toLowerCase();
-  if (!t) return true;
-  const banned = [
-    "imagen de",
-    "foto de",
-    "escena principal de la imagen",
-    "contenido multimedia",
-    "imagen",
-    "foto"
-  ];
-  return banned.includes(t);
-}
-
-function buildSeoReview({ mode, alt, title, leyenda, cfg, altAllowedEmpty }) {
-  const m = String(mode || "both");
-  const out = {
-    level: "ok",
-    badge: "OK",
-    score: 100,
-    issues: [],
-    suggestions: []
-  };
-  const pushIssue = (severity, field, message, suggestion = "") => {
-    out.issues.push({ severity, field, message });
-    if (suggestion) out.suggestions.push(suggestion);
-    if (severity === "error") out.score -= 30;
-    else out.score -= 12;
-  };
-
-  const altTxt = String(alt || "").trim();
-  const titleTxt = String(title || "").trim();
-  const capTxt = String(leyenda || "").trim();
-  const altMax = Number.isFinite(Number(cfg?.altMaxLength)) ? Number(cfg.altMaxLength) : 125;
-
-  if (m !== "caption") {
-    if (!altAllowedEmpty) {
-      if (!altTxt) pushIssue("error", "alt", "ALT vacío.", "Describe el sujeto principal visible en la imagen.");
-      else if (altTxt.length < 12) pushIssue("warning", "alt", "ALT demasiado corto.", "Añade un poco más de contexto visual.");
-    }
-    if (altMax > 0 && altTxt.length > altMax) {
-      pushIssue("error", "alt", `ALT supera ${altMax} caracteres.`, "Acorta el ALT manteniendo solo lo esencial.");
-    }
-    if (isGenericText(altTxt)) {
-      pushIssue("error", "alt", "ALT demasiado genérico.", "Sustituye por una descripción concreta de lo visible.");
-    }
-    if (/^\s*(imagen|foto)\s+de\b/i.test(altTxt)) {
-      pushIssue("warning", "alt", "ALT empieza por 'imagen/foto de'.", "Empieza directamente por el contenido visible.");
-    }
-    const tw = countWords(titleTxt);
-    if (!titleTxt) pushIssue("warning", "title", "Title vacío.", "Usa un title breve de 2 a 8 palabras.");
-    else {
-      if (tw < 2) pushIssue("warning", "title", "Title demasiado corto.", "Usa entre 2 y 8 palabras.");
-      if (tw > 8) pushIssue("warning", "title", "Title demasiado largo.", "Reduce el title a 2-8 palabras.");
-    }
-  }
-
-  if (m !== "alt") {
-    if (!capTxt) pushIssue("error", "leyenda", "Leyenda vacía.", "Añade una frase editorial breve.");
-    else {
-      if (capTxt.length < 18) pushIssue("warning", "leyenda", "Leyenda muy corta.", "Añade contexto editorial mínimo.");
-      if (!/[.!?…]$/.test(capTxt)) pushIssue("warning", "leyenda", "Leyenda sin cierre de frase.", "Termina la frase con puntuación final.");
-      if (isGenericText(capTxt)) pushIssue("error", "leyenda", "Leyenda demasiado genérica.", "Describe la escena con más precisión.");
-    }
-  }
-
-  out.score = Math.max(0, Math.min(100, out.score));
-  const hasError = out.issues.some((i) => i.severity === "error");
-  const hasWarning = out.issues.some((i) => i.severity === "warning");
-  if (hasError) {
-    out.level = "error";
-    out.badge = "Error";
-  } else if (hasWarning) {
-    out.level = "warning";
-    out.badge = "Mejorable";
-  } else {
-    out.level = "ok";
-    out.badge = "OK";
-  }
-  return out;
-}
-
-function runSecondPassQuality({ mode, alt, title, leyenda, cfg }) {
-  if (!cfg?.secondPassQualityEnabled) return { alt, title, leyenda };
-  const m = String(mode || "both");
-  let a = String(alt || "");
-  let t = String(title || "");
-  let c = String(leyenda || "");
-
-  // Keep second pass deterministic and conservative to avoid changing semantics.
-  a = normalizeAltText(a, Number.isFinite(Number(cfg?.altMaxLength)) ? Number(cfg.altMaxLength) : 125, cfg?.avoidImagePrefix !== false);
-  t = normalizeTitleText(t || a, { minWords: 2, maxWords: 8 });
-  c = normalizeCaptionText(c);
-
-  if (m !== "alt" && c) {
-    c = c.replace(/\s{2,}/g, " ");
-    if (!/[.!?…]$/.test(c)) c = `${c}.`;
-  }
-  if (m !== "caption" && !t && a) {
-    t = normalizeTitleText(a, { minWords: 2, maxWords: 6 });
-  }
-  return { alt: a, title: t, leyenda: c };
-}
-
-function seoLevelRank(level) {
-  const s = String(level || "").toLowerCase();
-  if (s === "ok") return 2;
-  if (s === "warning") return 1;
-  return 0;
-}
-
-function passesBatchQa(seoReview, cfg) {
-  if (!cfg?.batchQaModeEnabled) return true;
-  const minLevel = String(cfg?.batchQaMinLevel || "ok").toLowerCase();
-  const current = seoLevelRank(seoReview?.level || "error");
-  const min = seoLevelRank(minLevel);
-  return current >= min;
-}
-
-function applyPostValidation(cfg, { mode, alt, title, leyenda, decorative, altAllowedEmpty }) {
-  const enabled = !!cfg?.postValidationEnabled;
-  if (!enabled) return { alt, title, leyenda };
-
-  const rejectGeneric = !!cfg?.postValidationRejectGeneric;
-  const titleMinWords = Number.isFinite(Number(cfg?.postValidationTitleMinWords)) ? Number(cfg.postValidationTitleMinWords) : 2;
-  const titleMaxWords = Number.isFinite(Number(cfg?.postValidationTitleMaxWords)) ? Number(cfg.postValidationTitleMaxWords) : 8;
-  const altMinChars = Number.isFinite(Number(cfg?.postValidationAltMinChars)) ? Number(cfg.postValidationAltMinChars) : 0;
-  const captionMinChars = Number.isFinite(Number(cfg?.postValidationCaptionMinChars)) ? Number(cfg.postValidationCaptionMinChars) : 0;
-
-  const m = String(mode || "both");
-  const out = {
-    alt: String(alt || ""),
-    title: String(title || ""),
-    leyenda: String(leyenda || "")
-  };
-
-  if (m !== "caption") {
-    if (!altAllowedEmpty && altMinChars > 0 && out.alt.length < altMinChars) {
-      throw new Error(`Validación: ALT demasiado corto (< ${altMinChars}).`);
-    }
-    if (rejectGeneric && out.alt && isGenericText(out.alt)) {
-      throw new Error("Validación: ALT demasiado genérico.");
-    }
-    const tw = countWords(out.title);
-    if (tw > 0 && tw < Math.max(1, titleMinWords)) {
-      throw new Error(`Validación: title demasiado corto (< ${titleMinWords} palabras).`);
-    }
-    if (tw > Math.max(titleMinWords, titleMaxWords)) {
-      out.title = out.title.split(/\s+/).slice(0, Math.max(1, titleMaxWords)).join(" ");
-    }
-    if (rejectGeneric && out.title && isGenericText(out.title)) {
-      throw new Error("Validación: title demasiado genérico.");
-    }
-  }
-
-  if (m !== "alt") {
-    if (captionMinChars > 0 && out.leyenda.length < captionMinChars) {
-      throw new Error(`Validación: leyenda demasiado corta (< ${captionMinChars}).`);
-    }
-    if (rejectGeneric && out.leyenda && isGenericText(out.leyenda)) {
-      throw new Error("Validación: leyenda demasiado genérica.");
-    }
-  }
-
-  return out;
 }
 
 async function addMetricsSample(cfg, sample) {
@@ -1354,32 +1161,28 @@ if (chrome?.runtime?.onStartup?.addListener) {
 runtimeStateReady.then(async () => {
   await resumePersistedAutoUploadJobs();
   await resumePersistedBatchJobs();
+  await resumePersistedManualJobs({
+    getPersistedManualJob,
+    clearTabRuntimeState,
+    scheduleRuntimeStatePersist,
+    runOverlayAnalysisJob: (job) => runOverlayAnalysisJob({
+      ...job,
+      rememberManualJob,
+      forgetManualJob,
+      scheduleRuntimeStatePersist,
+      getConfigCached,
+      getSessionContextForTab,
+      resolveOnCompleteAction,
+      ensureOverlayInjected,
+      sendOverlay,
+      analyzeImage,
+      addMetricsSample,
+      logJobEvent
+    })
+  });
 }).catch(() => {});
 
 // Nota: usamos chrome.contextMenus.onShown *solo si existe* (en algunos forks no está).
-
-async function ensureOverlayInjected(tabId) {
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: ["wp_dom_shared.js", "wp_selectors_shared.js", "wp_media_shared.js", "overlay.js"]
-    });
-    return true;
-  } catch (_) {
-    return false;
-  }
-}
-
-async function sendOverlay(tabId, payload) {
-  try {
-    await chrome.tabs.sendMessage(tabId, payload);
-  } catch (e) {
-    // If content script isn't ready yet, try injecting again once.
-    const injected = await ensureOverlayInjected(tabId);
-    if (!injected) throw e;
-    await chrome.tabs.sendMessage(tabId, payload);
-  }
-}
 
 if (chrome?.contextMenus?.onClicked?.addListener) chrome.contextMenus.onClicked.addListener((info, tab) => {
   (async () => {
@@ -1443,65 +1246,27 @@ if (chrome?.contextMenus?.onClicked?.addListener) chrome.contextMenus.onClicked.
         });
         return;
       }
-
-      // Show overlay immediately (loading state)
       const cfg = await getConfigCached();
-      if (cfg?.extensionEnabled === false) {
-        await ensureOverlayInjected(tabId);
-        await sendOverlay(tabId, {
-          type: "MACA_OVERLAY_ERROR",
-          jobId,
-          error: "maca está desactivada en ajustes rápidos."
-        });
-        return;
-      }
-      await ensureOverlayInjected(tabId);
-      await sendOverlay(tabId, {
-        type: "MACA_OVERLAY_OPEN",
+      await runOverlayAnalysisJob({
         jobId,
-        imgUrl,
+        tabId,
         pageUrl,
-        sessionContext: getSessionContextForTab(tabId),
-        generateMode: String(cfg.generateMode || "both"),
-        wpAutoApply: !!cfg.wpAutoApply,
-        wpAutoApplyRequireMedia: !!cfg.wpAutoApplyRequireMedia,
-        autoCaptionSignatureOnAutoFill: !!cfg.autoCaptionSignatureOnAutoFill,
-        onCompleteAction: resolveOnCompleteAction(cfg, pageUrl)
+        imgUrl,
+        filenameContext,
+        source: "contextmenu",
+        withCaptionSignature: !!cfg.contextMenuUseSignature,
+        rememberManualJob,
+        forgetManualJob,
+        scheduleRuntimeStatePersist,
+        getConfigCached,
+        getSessionContextForTab,
+        resolveOnCompleteAction,
+        ensureOverlayInjected,
+        sendOverlay,
+        analyzeImage,
+        addMetricsSample,
+        logJobEvent
       });
-
-      // Run analysis and update overlay when ready
-      try {
-        const { alt, title, leyenda, seoReview, decorativa } = await analyzeImage({
-          imageUrl: imgUrl,
-          filenameContext,
-          pageUrl,
-          tabId,
-          withCaptionSignature: !!cfg.contextMenuUseSignature,
-          source: "contextmenu"
-        });
-
-        await sendOverlay(tabId, {
-          type: "MACA_OVERLAY_RESULT",
-          jobId,
-          alt,
-          title,
-          leyenda,
-          seoReview
-        });
-      } catch (err) {
-        await addMetricsSample(cfg, {
-          ok: false,
-          ms: 0,
-          mode: String(cfg.generateMode || "both"),
-          source: "contextmenu",
-          error: err?.message || String(err)
-        });
-        await sendOverlay(tabId, {
-          type: "MACA_OVERLAY_ERROR",
-          jobId,
-          error: err?.message || String(err)
-        });
-      }
       return;
     }
   })();
@@ -1520,7 +1285,8 @@ async function analyzeImage({
   styleOverride = "",
   tabId = null,
   abortSignal = null,
-  source = "manual"
+  source = "manual",
+  jobId = ""
 }) {
   if (!isWpAdminUrl(pageUrl || "")) {
     throw new Error("maca está limitada a WordPress (wp-admin).");
@@ -1539,7 +1305,9 @@ async function analyzeImage({
     : cfg.model;
   const mode = String(modeOverride || cfg.generateMode || "both"); // both | alt | caption
   const sessionContext = getSessionContextForTab(tabId);
-  await addDebugLog(cfg, "analyze_start", {
+  await logJobEvent(cfg, "analyze_start", {
+    jobId,
+    phase: "start",
     provider: cfg.provider,
     model: cfg.model,
     mode: String(modeOverride || cfg.generateMode || "both"),
@@ -1756,6 +1524,14 @@ async function analyzeImage({
   }
 
   const ms = Date.now() - startedAt;
+  await logJobEvent(cfg, "analyze_done", {
+    jobId,
+    phase: "done",
+    source,
+    provider: cfg.provider,
+    model: selectedModel,
+    ms
+  });
   await addMetricsSample(cfg, {
     ok: true,
     ms,
@@ -1853,20 +1629,33 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
   if (msg.type === "MACA_ANALYZE_IMAGE") {
     (async () => {
       const startedAt = Date.now();
+      const tabId = sender?.tab?.id ?? null;
+      const pageUrl = sender.tab?.url || "";
+      const jobId = String(msg?.jobId || crypto.randomUUID());
       try {
         const cfg = await getConfigCached();
         const imageUrl = msg.imageUrl;
         const filenameContext = msg.filenameContext || "";
-        const pageUrl = sender.tab?.url || "";
+        rememberManualJob(tabId, {
+          jobId,
+          source: "overlay_manual",
+          imageUrl,
+          filenameContext,
+          pageUrl,
+          withCaptionSignature: !!cfg.contextMenuUseSignature,
+          styleOverride: String(msg?.styleOverride || "")
+        });
+        scheduleRuntimeStatePersist();
 
         const { alt, title, leyenda, seoReview, decorativa } = await analyzeImage({
           imageUrl,
           filenameContext,
           pageUrl,
-          tabId: sender?.tab?.id ?? null,
+          tabId,
           withCaptionSignature: !!cfg.contextMenuUseSignature,
           styleOverride: String(msg?.styleOverride || ""),
-          source: "overlay_manual"
+          source: "overlay_manual",
+          jobId
         });
 
         sendResponse({ alt, title, leyenda, seoReview, decorativa });
@@ -1880,6 +1669,9 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
           error: err?.message || String(err)
         });
         sendResponse({ error: err.message || String(err) });
+      } finally {
+        forgetManualJob(tabId);
+        scheduleRuntimeStatePersist();
       }
     })();
 
@@ -1890,19 +1682,32 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
   if (msg.type === "MACA_REGENERATE") {
     (async () => {
       const startedAt = Date.now();
+      const tabId = sender?.tab?.id ?? null;
+      const jobId = String(msg?.jobId || crypto.randomUUID());
       try {
         const cfg = await getConfigCached();
         const imageUrl = msg.imageUrl;
         const filenameContext = msg.filenameContext || "";
         const pageUrl = msg.pageUrl || sender.tab?.url || "";
+        rememberManualJob(tabId, {
+          jobId,
+          source: "overlay_regenerate",
+          imageUrl,
+          filenameContext,
+          pageUrl,
+          withCaptionSignature: !!cfg.contextMenuUseSignature,
+          styleOverride: String(msg?.styleOverride || "")
+        });
+        scheduleRuntimeStatePersist();
         const { alt, title, leyenda, seoReview, decorativa } = await analyzeImage({
           imageUrl,
           filenameContext,
           pageUrl,
-          tabId: sender?.tab?.id ?? null,
+          tabId,
           withCaptionSignature: !!cfg.contextMenuUseSignature,
           styleOverride: String(msg?.styleOverride || ""),
-          source: "overlay_regenerate"
+          source: "overlay_regenerate",
+          jobId
         });
         sendResponse({ alt, title, leyenda, seoReview, decorativa });
       } catch (err) {
@@ -1915,6 +1720,9 @@ if (chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListene
           error: err?.message || String(err)
         });
         sendResponse({ error: err?.message || String(err) });
+      } finally {
+        forgetManualJob(tabId);
+        scheduleRuntimeStatePersist();
       }
     })();
     return true;

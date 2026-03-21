@@ -9,7 +9,7 @@ La informacion general del proyecto, funciones y flujo de uso esta en:
 ## Estado
 
 - Navegador: `Firefox`
-- Version: `1.0.8`
+- Version: `1.0.9`
 - Carpeta de la extension: `maca for firefox/`
 - Tipo: `Manifest V3` adaptado a Firefox
 

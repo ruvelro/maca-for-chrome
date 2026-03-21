@@ -19,6 +19,13 @@
 - Extracted shared WordPress selector/media modules and added browser smoke coverage with Playwright fixtures.
 - Added generated-output drift checks and auto-generated banners for browser build folders.
 
+## 2026-03-22
+
+- Continued splitting `src/shared/background.js` with dedicated overlay-runtime, manual-job, and quality modules.
+- Added persisted manual-job recovery state for overlay/manual and regenerate flows.
+- Improved apply visibility and observability with per-field apply outcomes and richer apply debug data.
+- Expanded browser smoke coverage to include overlay open/result rendering in addition to shared WordPress DOM/media helpers.
+
 ## Recent Git History Snapshot
 
 From local `git log --oneline -5` during audit:

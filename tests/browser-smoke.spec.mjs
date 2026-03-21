@@ -8,7 +8,8 @@ const fixtureHtml = fs.readFileSync(path.resolve("tests", "fixtures", "wp-admin-
 const sharedScripts = [
   "src/shared/wp_dom_shared.js",
   "src/shared/wp_selectors_shared.js",
-  "src/shared/wp_media_shared.js"
+  "src/shared/wp_media_shared.js",
+  "src/shared/overlay.js"
 ].map((file) => fs.readFileSync(path.resolve(file), "utf8"));
 
 let server;
@@ -34,6 +35,26 @@ test.afterAll(async () => {
 });
 
 test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    const listeners = [];
+    window.__overlayListeners = listeners;
+    window.chrome = {
+      runtime: {
+        onMessage: {
+          addListener(fn) { listeners.push(fn); },
+          removeListener(fn) {
+            const idx = listeners.indexOf(fn);
+            if (idx >= 0) listeners.splice(idx, 1);
+          }
+        },
+        sendMessage: async (msg) => {
+          if (msg?.type === "MACA_GET_ACTIVE_SIGNATURE") return { text: "", name: "" };
+          return { ok: true };
+        }
+      }
+    };
+    window.navigator.clipboard = { writeText: async () => {} };
+  });
   await page.goto(`${baseUrl}/wp-admin/upload.php`);
   for (const content of sharedScripts) {
     await page.addScriptTag({ content });
@@ -72,4 +93,35 @@ test("shared WordPress DOM helpers apply alt, title and caption in a real browse
   await expect(page.locator("#attachment_alt")).toHaveValue("Alt de prueba");
   await expect(page.locator("#attachment_title")).toHaveValue("Titulo prueba");
   await expect(page.locator("#attachment_caption_editable")).toHaveText("Leyenda prueba");
+});
+
+test("overlay renders open/result flow in browser smoke", async ({ page }) => {
+  await page.evaluate(() => {
+    const listeners = window.__overlayListeners || [];
+    const send = (msg) => listeners.forEach((fn) => fn(msg, {}, () => {}));
+    send({
+      type: "MACA_OVERLAY_OPEN",
+      jobId: "job-1",
+      imgUrl: "data:image/gif;base64,R0lGODlhAQABAAAAACwAAAAAAQABAAA=",
+      pageUrl: window.location.href,
+      sessionContext: "comparativa",
+      generateMode: "both",
+      wpAutoApply: false,
+      wpAutoApplyRequireMedia: true,
+      onCompleteAction: "none"
+    });
+    send({
+      type: "MACA_OVERLAY_RESULT",
+      jobId: "job-1",
+      alt: "Alt overlay",
+      title: "Title overlay",
+      leyenda: "Leyenda overlay.",
+      seoReview: { level: "ok", badge: "OK", score: 100 }
+    });
+  });
+
+  await expect(page.locator("#maca-overlay")).toBeVisible();
+  await expect(page.locator("#maca-alt")).toHaveValue("Alt overlay");
+  await expect(page.locator("#maca-title")).toHaveValue("Title overlay");
+  await expect(page.locator("#maca-cap")).toHaveValue("Leyenda overlay.");
 });

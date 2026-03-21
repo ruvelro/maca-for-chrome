@@ -9,6 +9,7 @@ export const __autoUploadJobsByTab = new Map();
 export const __batchCancelByTab = new Map();
 export const __batchAbortByTab = new Map();
 export const __batchJobsByTab = new Map();
+export const __manualJobsByTab = new Map();
 export const __sessionContextByTab = new Map();
 
 function toTabKey(tabId) {
@@ -156,7 +157,31 @@ export function clearTabRuntimeState(tabId) {
   __batchCancelByTab.delete(tabId);
   __batchAbortByTab.delete(tabId);
   __batchJobsByTab.delete(tabId);
+  __manualJobsByTab.delete(tabId);
   __sessionContextByTab.delete(tabId);
+}
+
+export function rememberManualJob(tabId, job) {
+  if (tabId == null || !job) return;
+  __manualJobsByTab.set(tabId, {
+    jobId: String(job.jobId || ""),
+    source: String(job.source || "manual"),
+    imageUrl: String(job.imageUrl || ""),
+    filenameContext: String(job.filenameContext || ""),
+    pageUrl: String(job.pageUrl || ""),
+    withCaptionSignature: !!job.withCaptionSignature,
+    styleOverride: String(job.styleOverride || ""),
+    modeOverride: String(job.modeOverride || "")
+  });
+}
+
+export function forgetManualJob(tabId) {
+  __manualJobsByTab.delete(tabId);
+}
+
+export function getPersistedManualJob(tabId) {
+  const job = __manualJobsByTab.get(tabId);
+  return job ? { ...job } : null;
 }
 
 export function rememberBatchJob(tabId, job) {
@@ -201,6 +226,7 @@ export function serializeRuntimeState() {
     autoUploadJobs: Array.from(__autoUploadJobsByTab.entries()),
     batchCancel: Array.from(__batchCancelByTab.entries()),
     batchJobs: Array.from(__batchJobsByTab.entries()),
+    manualJobs: Array.from(__manualJobsByTab.entries()),
     sessionContext: Array.from(__sessionContextByTab.entries())
   };
 }
@@ -218,6 +244,7 @@ export function hydrateRuntimeState(snapshot) {
     __batchCancelByTab,
     __batchAbortByTab,
     __batchJobsByTab,
+    __manualJobsByTab,
     __sessionContextByTab
   ]) map.clear();
 
@@ -250,6 +277,9 @@ export function hydrateRuntimeState(snapshot) {
   for (const [tabId, job] of snapshot.batchJobs || []) {
     if (job && Array.isArray(job.items)) __batchJobsByTab.set(fromTabKey(tabId), { ...job, items: job.items.map((it) => ({ ...it })) });
   }
+  for (const [tabId, job] of snapshot.manualJobs || []) {
+    if (job && typeof job === "object") __manualJobsByTab.set(fromTabKey(tabId), { ...job });
+  }
   for (const [tabId, text] of snapshot.sessionContext || []) {
     __sessionContextByTab.set(fromTabKey(tabId), String(text || ""));
   }
@@ -268,6 +298,7 @@ export function normalizeRuntimeSnapshotForStorage(snapshot = serializeRuntimeSt
     autoUploadJobs: encodeTabMap(snapshot.autoUploadJobs || []),
     batchCancel: encodeTabMap(snapshot.batchCancel || []),
     batchJobs: encodeTabMap(snapshot.batchJobs || []),
+    manualJobs: encodeTabMap(snapshot.manualJobs || []),
     sessionContext: encodeTabMap(snapshot.sessionContext || [])
   };
 }

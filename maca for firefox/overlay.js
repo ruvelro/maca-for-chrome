@@ -75,7 +75,8 @@
     autoUploadCancelling: false,
     autoUploadPaused: false,
     sessionContextTimer: null,
-    loadingWatchdogTimer: null
+    loadingWatchdogTimer: null,
+    lastApplyStatus: null
   };
 
   function injectStyles() {
@@ -531,6 +532,8 @@
         }
 
         const res = applyToWordPressFields(payload);
+        STATE.lastApplyStatus = res;
+        updateApplyStatusText(res, { auto: true });
         const okAlt = !wantAlt || !!res?.alt;
         const okTitle = !wantTitle || !!res?.title;
         const okCap = !wantCap || !!res?.leyenda;
@@ -568,6 +571,7 @@
     STATE.autoUploadRunning = false;
     STATE.autoUploadCancelling = false;
     STATE.autoUploadPaused = false;
+    STATE.lastApplyStatus = null;
     clearSessionContextTimer();
     removeOverlay();
     removeMini();
@@ -658,27 +662,41 @@ function isMediaModalOpen() {
     return !!WP_DOM.setWpFormValue?.(el, value);
   }
 
+  function updateApplyStatusText(result, { auto = false } = {}) {
+    if (!UI.statusBox || !result) return;
+    const txt = UI.statusBox.querySelector(".status-text");
+    if (!txt) return;
+    const parts = [];
+    if (result.details?.alt) parts.push(`ALT ${result.alt ? "OK" : "ERROR"}`);
+    if (result.details?.title) parts.push(`Title ${result.title ? "OK" : "ERROR"}`);
+    if (result.details?.leyenda) parts.push(`Leyenda ${result.leyenda ? "OK" : "ERROR"}`);
+    if (!parts.length) return;
+    txt.textContent = `${auto ? "Auto-aplicado" : "Aplicado"}: ${parts.join(", ")}`;
+  }
+
   function applyToWordPressFields({ alt, title, leyenda }) {
-    const res = { alt: false, title: false, leyenda: false };
+    const res = { alt: false, title: false, leyenda: false, details: { alt: null, title: null, leyenda: null } };
     try {
       const altEl = getAltField();
-      if (altEl && typeof alt === "string") res.alt = setFormValue(altEl, alt);
+      if (altEl && typeof alt === "string") {
+        res.alt = setFormValue(altEl, alt);
+        res.details.alt = { ok: res.alt, selector: WP_SELECTORS.alt || "label-fallback" };
+      }
 
       const titleEl = getTitleField();
-      if (titleEl && typeof title === "string") res.title = setFormValue(titleEl, title);
+      if (titleEl && typeof title === "string") {
+        res.title = setFormValue(titleEl, title);
+        res.details.title = { ok: res.title, selector: WP_SELECTORS.title || "label-fallback" };
+      }
 
       const capEl = getCaptionField();
-      if (capEl && typeof leyenda === "string") res.leyenda = setFormValue(capEl, leyenda);
-
-      if (UI.statusBox) {
-        const txt = UI.statusBox.querySelector(".status-text");
-        if (txt) {
-          if (res.alt || res.title || res.leyenda) {
-            txt.textContent = "Pegado en WordPress.";
-          }
-        }
+      if (capEl && typeof leyenda === "string") {
+        res.leyenda = setFormValue(capEl, leyenda);
+        res.details.leyenda = { ok: res.leyenda, selector: WP_SELECTORS.caption || "label-fallback" };
       }
     } catch (_) {}
+    STATE.lastApplyStatus = res;
+    updateApplyStatusText(res, { auto: false });
     return res;
   }
 
@@ -1198,7 +1216,10 @@ Leyenda: ${c}`);
 	        if (isLoading) {
 	          textEl.textContent = mode === "alt" ? "Generando ALT y title..." : (mode === "caption" ? "Generando leyenda..." : "Generando ALT, title y leyenda...");
 	        }
-        else if (isReady) textEl.textContent = "Listo. Puedes copiar los textos.";
+        else if (isReady) {
+          if (STATE.lastApplyStatus) updateApplyStatusText(STATE.lastApplyStatus, { auto: true });
+          else textEl.textContent = "Listo. Puedes copiar los textos.";
+        }
         else if (isError) textEl.textContent = `Error: ${STATE.error || "desconocido"}`;
         else textEl.textContent = "";
       }
@@ -1273,7 +1294,7 @@ Leyenda: ${c}`);
       if (btnStyleTech) btnStyleTech.disabled = isLoading;
       if (btnStyleShort) btnStyleShort.disabled = isLoading;
       if (btnStyleEditorial) btnStyleEditorial.disabled = isLoading;
-      if (UI.batchBtn) UI.batchBtn.disabled = STATE.batchRunning || !isWpAdminPage() || getWpSelectedCount() <= 1;
+      if (UI.batchBtn) UI.batchBtn.disabled = STATE.batchRunning || !WP_MEDIA.isWpAdminPage?.() || getWpSelectedCount() <= 1;
       if (btnBatchCancel) {
         btnBatchCancel.style.display = STATE.batchRunning ? "" : "none";
         btnBatchCancel.disabled = !STATE.batchRunning || STATE.batchCancelling;
@@ -1390,6 +1411,7 @@ Leyenda: ${c}`);
     STATE.leyenda = "";
     STATE.seoReview = null;
     STATE.sessionContext = String(sessionContext || "");
+    STATE.lastApplyStatus = null;
     STATE.status = "loading";
     STATE.error = "";
     STATE.loadingSince = Date.now();

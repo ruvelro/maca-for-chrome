@@ -582,26 +582,38 @@
 
   const isVisibleField = (el) => !!WP_DOM.isVisibleField?.(el);
 
+  function pickFieldMatchFromSelectors(scope, details, selectors) {
+    const roots = [details, scope, document].filter(Boolean);
+    for (const root of roots) {
+      for (const sel of selectors) {
+        try {
+          const all = Array.from(root.querySelectorAll(sel));
+          const visible = all.find(isVisibleField);
+          if (visible) return { element: visible, selector: sel };
+          if (all[0]) return { element: all[0], selector: sel };
+        } catch (_) {}
+      }
+    }
+    return { element: null, selector: "" };
+  }
+
   function pickFieldFromSelectors(scope, details, selectors) {
-    return WP_DOM.pickFieldFromSelectors?.([details, scope, document], selectors) || null;
+    return pickFieldMatchFromSelectors(scope, details, selectors).element;
+  }
+
+  function getAttachmentFieldMatch(id, key) {
+    const scope = document.querySelector(".media-modal") || document.querySelector(".media-frame") || document;
+    const details = scope.querySelector(".attachment-details") || document.querySelector(".attachment-details");
+    const selectors = WP_SELECTORS_SHARED.getAttachmentFieldSelectors?.(id, key === "leyenda" ? "caption" : key) || [];
+    return pickFieldMatchFromSelectors(scope, details, selectors);
   }
 
   function getAltFieldForAttachment(id) {
-    const scope = document.querySelector(".media-modal") || document.querySelector(".media-frame") || document;
-    const details =
-      scope.querySelector(".attachment-details") ||
-      document.querySelector(".attachment-details");
-    const selectors = WP_SELECTORS_SHARED.getAttachmentFieldSelectors?.(id, "alt") || [];
-    return pickFieldFromSelectors(scope, details, selectors);
+    return getAttachmentFieldMatch(id, "alt").element;
   }
 
   function getCaptionFieldForAttachment(id) {
-    const scope = document.querySelector(".media-modal") || document.querySelector(".media-frame") || document;
-    const details =
-      scope.querySelector(".attachment-details") ||
-      document.querySelector(".attachment-details");
-    const selectors = WP_SELECTORS_SHARED.getAttachmentFieldSelectors?.(id, "caption") || [];
-    return pickFieldFromSelectors(scope, details, selectors);
+    return getAttachmentFieldMatch(id, "leyenda").element;
   }
 
   function getRequiredAttachmentFields(mode) {
@@ -611,10 +623,7 @@
   }
 
   function getAttachmentFieldByKey(id, key) {
-    if (key === "alt") return getAltFieldForAttachment(id);
-    if (key === "title") return getTitleFieldForAttachment(id);
-    if (key === "leyenda") return getCaptionFieldForAttachment(id);
-    return null;
+    return getAttachmentFieldMatch(id, key);
   }
 
   async function waitForAttachmentFields(id, mode, timeoutMs = 3500) {
@@ -623,7 +632,7 @@
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
       const selected = isAttachmentSelectedById(id);
-      const ready = required.every((key) => !!getAttachmentFieldByKey(id, key));
+      const ready = required.every((key) => !!getAttachmentFieldByKey(id, key)?.element);
       if ((selected || !clickAttachmentById(id)) && ready) return true;
       await new Promise((r) => setTimeout(r, 80));
     }
@@ -631,12 +640,7 @@
   }
 
   function getTitleFieldForAttachment(id) {
-    const scope = document.querySelector(".media-modal") || document.querySelector(".media-frame") || document;
-    const details =
-      scope.querySelector(".attachment-details") ||
-      document.querySelector(".attachment-details");
-    const selectors = WP_SELECTORS_SHARED.getAttachmentFieldSelectors?.(id, "title") || [];
-    return pickFieldFromSelectors(scope, details, selectors);
+    return getAttachmentFieldMatch(id, "title").element;
   }
 
   async function applyToAttachment({ attachmentId, alt, title, leyenda, generateMode, requireMedia }) {
@@ -653,18 +657,28 @@
     await waitForAttachmentFields(id, mode, 3500);
 
     const res = { alt: false, title: false, leyenda: false };
+    const applyDetails = { alt: null, title: null, leyenda: null };
     const missing = [];
     if (mode === "both" || mode === "alt") {
-      const altEl = getAltFieldForAttachment(id);
-      if (altEl) res.alt = setFormValue(altEl, String(alt || ""));
+      const altField = getAttachmentFieldByKey(id, "alt");
+      if (altField?.element) {
+        res.alt = setFormValue(altField.element, String(alt || ""));
+        applyDetails.alt = { selector: altField.selector || "", ok: res.alt };
+      }
       else missing.push("alt");
-      const titleEl = getTitleFieldForAttachment(id);
-      if (titleEl) res.title = setFormValue(titleEl, String(title || alt || ""));
+      const titleField = getAttachmentFieldByKey(id, "title");
+      if (titleField?.element) {
+        res.title = setFormValue(titleField.element, String(title || alt || ""));
+        applyDetails.title = { selector: titleField.selector || "", ok: res.title };
+      }
       else missing.push("title");
     }
     if (mode === "both" || mode === "caption") {
-      const capEl = getCaptionFieldForAttachment(id);
-      if (capEl) res.leyenda = setFormValue(capEl, String(leyenda || ""));
+      const capField = getAttachmentFieldByKey(id, "leyenda");
+      if (capField?.element) {
+        res.leyenda = setFormValue(capField.element, String(leyenda || ""));
+        applyDetails.leyenda = { selector: capField.selector || "", ok: res.leyenda };
+      }
       else missing.push("leyenda");
     }
 
@@ -674,10 +688,11 @@
 
     const ok = missing.length === 0;
     return ok
-      ? { ok: true, applied: res, missing: [] }
+      ? { ok: true, applied: res, applyDetails, missing: [] }
       : {
           ok: false,
           applied: res,
+          applyDetails,
           missing,
           error: `No se pudieron aplicar todos los campos requeridos (${missing.join(", ")}).`
         };
