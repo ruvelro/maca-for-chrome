@@ -1,4 +1,4 @@
-/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/*/ INSTEAD. */
+/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/ INSTEAD. */
 import { safeJson } from "./shared.js";
 
 export async function analyzeGemini({ cfg, finalPrompt, dataUrl, mime, fetchWithTimeout, abortSignal }) {

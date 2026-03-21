@@ -1,4 +1,4 @@
-/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/*/ INSTEAD. */
+<!-- AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/ INSTEAD. -->
 # maca for Firefox
 
 README especifico de la version para `Firefox`.
@@ -10,7 +10,7 @@ La informacion general del proyecto, funciones y flujo de uso esta en:
 ## Estado
 
 - Navegador: `Firefox`
-- Version: `1.0.9`
+- Version: `1.0.10`
 - Carpeta de la extension: `maca for firefox/`
 - Tipo: `Manifest V3` adaptado a Firefox
 

@@ -1,4 +1,4 @@
-/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/*/ INSTEAD. */
+/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/ INSTEAD. */
 import { safeJson, pickTextFromOpenAICompat, buildOpenAICompatUrl } from "./shared.js";
 
 export async function analyzeLocalOpenAI({ cfg, finalPrompt, dataUrl, fetchWithTimeout, abortSignal, endpoint, model }) {

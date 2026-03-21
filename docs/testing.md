@@ -7,6 +7,7 @@ Confirmed by repo inspection:
 - a small automated Node-based test suite now exists under `tests/`
 - `package.json` now defines `npm test`
 - Playwright browser smoke coverage exists for the shared WordPress DOM/media helpers against a local `wp-admin` fixture
+- Playwright also verifies that the generated Chrome extension boots its MV3 service worker and opens the options page
 - no CI config is committed
 
 ## Available Verification Surfaces

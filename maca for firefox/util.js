@@ -1,4 +1,4 @@
-/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/*/ INSTEAD. */
+/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/ INSTEAD. */
 export function nowIso() {
   return new Date().toISOString();
 }

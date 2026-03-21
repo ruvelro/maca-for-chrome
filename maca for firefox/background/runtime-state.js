@@ -1,4 +1,4 @@
-/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/*/ INSTEAD. */
+/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/ INSTEAD. */
 export const __lastCandidateByTab = new Map();
 export const __autoUploadQueueByTab = new Map();
 export const __autoUploadSeenByTab = new Map();

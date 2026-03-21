@@ -1,4 +1,4 @@
-/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/*/ INSTEAD. */
+/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/ INSTEAD. */
 ﻿// overlay.js - maca floating overlay (universal)
 // Fixes: spinner always visible (even if result arrives instantly), copy feedback always shown.
 // Safe reinjection: overwrites styles + replaces message listener.

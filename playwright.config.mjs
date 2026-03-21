@@ -1,6 +1,6 @@
 export default {
   testDir: "./tests",
-  testMatch: /browser-smoke\.spec\.mjs$/,
+  testMatch: /.*\.spec\.mjs$/,
   timeout: 60000,
   fullyParallel: false,
   workers: 1,

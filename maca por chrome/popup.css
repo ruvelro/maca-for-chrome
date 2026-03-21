@@ -1,4 +1,4 @@
-/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/*/ INSTEAD. */
+/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/ INSTEAD. */
 :root{--bg:#fff;--fg:#111;--muted:#666;--border:#e6e6e6;--chip:#f4f4f5;--btn:#f3f4f6;--btnfg:#111;--accent:#2563eb}
 *{box-sizing:border-box;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif}
 /* Make the footer (Privacidad) always visible: layout as a column with a scrollable main */

@@ -1,4 +1,4 @@
-/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/*/ INSTEAD. */
+<!-- AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/ INSTEAD. -->
 # maca for Chrome
 
 README específico de la versión para `Chrome / Chromium`.
@@ -10,7 +10,7 @@ La información general del proyecto, funciones, arquitectura y flujo de uso est
 ## Estado
 
 - Navegador: `Chrome / Chromium`
-- Versión: `1.0.9`
+- Versión: `1.0.10`
 - Carpeta de la extensión: `maca por chrome/`
 - Tipo: `Manifest V3`
 
@@ -33,7 +33,7 @@ La información general del proyecto, funciones, arquitectura y flujo de uso est
 
 Archivo preparado:
 
-- `../dist/chrome/maca-for-chrome-1.0.9.zip`
+- `../dist/chrome/maca-for-chrome-1.0.10.zip`
 
 Uso:
 

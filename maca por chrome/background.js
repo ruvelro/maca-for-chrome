@@ -1,4 +1,4 @@
-/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/*/ INSTEAD. */
+/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/ INSTEAD. */
 import {
   nowIso,
   clampHistory,
@@ -332,31 +332,6 @@ function adjustDefaultPromptForModeAndSeo(tpl, { mode, altMaxLength, avoidImageP
   return s.trim();
 }
 // NOTE: fetchWithTimeout is imported from util.js. Do not re-declare it here.
-
-function isOpenRouterGlm(provider, model) {
-  return String(provider || "") === "openrouter" && /glm/i.test(String(model || ""));
-}
-
-function getOpenRouterGlmQualityPrompt(mode) {
-  const m = String(mode || "both");
-  const schema =
-    m === "alt"
-      ? '{"alt":"...","title":"...","decorativa":false}'
-      : (m === "caption"
-        ? '{"leyenda":"..."}'
-        : '{"alt":"...","title":"...","leyenda":"...","decorativa":false}');
-  return [
-    "MODO CALIDAD (OpenRouter/GLM):",
-    "- Usa español de España (es-ES). Evita latinismos y regionalismos de Latinoamérica.",
-    "- Describe SOLO lo visible, sin inventar datos técnicos o marcas no legibles.",
-    "- ALT: concreto, natural y útil para accesibilidad.",
-    "- TITLE: 2-8 palabras, nunca repitas el ALT completo.",
-    "- LEYENDA: 1 frase editorial breve; evita relleno.",
-    "- Prohibido devolver razonamiento, explicaciones o texto fuera del JSON.",
-    "- Salida obligatoria: JSON válido y nada más.",
-    schema
-  ].join("\n");
-}
 
 function getSpanishLocaleGuard(lang) {
   const s = String(lang || "").toLowerCase();

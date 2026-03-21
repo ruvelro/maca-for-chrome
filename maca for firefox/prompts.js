@@ -1,4 +1,4 @@
-/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/*/ INSTEAD. */
+/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/ INSTEAD. */
 export const DEFAULT_PROMPTS = {
   blog: `
 Eres editor SEO y accesibilidad (E-E-A-T).

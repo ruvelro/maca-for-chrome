@@ -1,4 +1,4 @@
-/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/*/ INSTEAD. */
+/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/ INSTEAD. */
 import { normalizeAltText, normalizeCaptionText } from "../util.js";
 
 export function normalizeTitleText(title, { minWords = 2, maxWords = 8 } = {}) {

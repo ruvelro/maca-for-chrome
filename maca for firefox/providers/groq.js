@@ -1,4 +1,4 @@
-/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/*/ INSTEAD. */
+/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/ INSTEAD. */
 import { safeJson, pickTextFromOpenAICompat } from "./shared.js";
 
 export async function analyzeGroq({ cfg, finalPrompt, dataUrl, fetchWithTimeout, abortSignal }) {

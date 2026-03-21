@@ -1,4 +1,4 @@
-/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/*/ INSTEAD. */
+/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/ INSTEAD. */
 import { normalizeEndpoint, pickOutputTextFromOpenAIResponse } from "../util.js";
 import { analyzeOpenAI, testOpenAIConfig } from "./openai.js";
 import { analyzeGemini, testGeminiConfig } from "./gemini.js";

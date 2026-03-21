@@ -1,4 +1,4 @@
-/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/*/ INSTEAD. */
+/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/ INSTEAD. */
 // offscreen.js
 // Performs clipboard writes in an extension offscreen document.
 // Uses execCommand('copy') to produce OS-level clipboard update events.

@@ -25,6 +25,8 @@
 - Added persisted manual-job recovery state for overlay/manual and regenerate flows.
 - Improved apply visibility and observability with per-field apply outcomes and richer apply debug data.
 - Expanded browser smoke coverage to include overlay open/result rendering in addition to shared WordPress DOM/media helpers.
+- Fixed generated-banner syntax breakage in Chrome/Firefox outputs that prevented MV3 service worker startup.
+- Added syntax smoke validation for generated JavaScript and an extension-load smoke test that verifies service worker registration and options page access.
 
 ## Recent Git History Snapshot
 

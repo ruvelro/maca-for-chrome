@@ -1,4 +1,4 @@
-/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/*/ INSTEAD. */
+/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/ INSTEAD. */
 // context_helper.js - captures the last right-click target and extracts an image URL.
 // Also supports fetching the currently selected/open media item in WordPress Media Library.
 // Loaded only on wp-admin pages via content_scripts.

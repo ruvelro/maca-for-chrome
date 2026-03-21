@@ -6,6 +6,16 @@ import { execFileSync } from "node:child_process";
 
 const root = path.resolve(".");
 
+function listJsFiles(dir, base = dir) {
+  const out = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...listJsFiles(full, base));
+    else if (entry.name.endsWith(".js")) out.push(path.relative(base, full));
+  }
+  return out;
+}
+
 test("shared build generator refreshes both browser outputs", () => {
   execFileSync("node", [path.join("scripts", "build-extensions.mjs"), "all"], {
     cwd: root,
@@ -24,8 +34,16 @@ test("shared build generator refreshes both browser outputs", () => {
   assert.equal(fs.existsSync(path.join(root, "maca for firefox", "background", "config.js")), true);
 
   assert.equal(chromeManifest.content_scripts[0].js[0], "wp_dom_shared.js");
-  assert.equal(chromeManifest.version, "1.0.9");
+  assert.equal(chromeManifest.version, "1.0.10");
   assert.equal(firefoxManifest.content_scripts[0].js[0], "wp_dom_shared.js");
-  assert.equal(firefoxManifest.version, "1.0.9");
+  assert.equal(firefoxManifest.version, "1.0.10");
   assert.match(chromeBackground, /AUTO-GENERATED FILE/);
+
+  for (const variantDir of [path.join(root, "maca por chrome"), path.join(root, "maca for firefox")]) {
+    for (const rel of listJsFiles(variantDir)) {
+      assert.doesNotThrow(() => {
+        execFileSync("node", ["--check", path.join(variantDir, rel)], { cwd: root, stdio: "pipe" });
+      });
+    }
+  }
 });

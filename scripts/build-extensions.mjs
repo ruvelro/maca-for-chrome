@@ -63,11 +63,11 @@ function copyRecursive(src, dest) {
   if ([".js", ".css", ".html", ".md", ".txt"].includes(ext)) {
     const raw = fs.readFileSync(src, "utf8");
     const banner = ext === ".html"
-      ? "<!-- AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/*/ INSTEAD. -->\n"
-      : ext === ".css"
-        ? "/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/*/ INSTEAD. */\n"
-        : "/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/*/ INSTEAD. */\n";
-    const cleaned = raw.replace(/^(?:\/\* AUTO-GENERATED FILE\. EDIT src\/shared\/ OR src\/platform\/\*\/ INSTEAD\. \*\/|<!-- AUTO-GENERATED FILE\. EDIT src\/shared\/ OR src\/platform\/\*\/ INSTEAD\. -->)\r?\n/, "");
+      ? "<!-- AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/ INSTEAD. -->\n"
+      : ext === ".md" || ext === ".txt"
+        ? "<!-- AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/ INSTEAD. -->\n"
+        : "/* AUTO-GENERATED FILE. EDIT src/shared/ OR src/platform/ INSTEAD. */\n";
+    const cleaned = raw.replace(/^(?:\/\* AUTO-GENERATED FILE\.[^\n]*\*\/|<!-- AUTO-GENERATED FILE\.[^\n]*-->)\r?\n/, "");
     fs.writeFileSync(dest, `${banner}${cleaned}`, "utf8");
     return;
   }
