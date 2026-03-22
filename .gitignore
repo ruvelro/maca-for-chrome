@@ -9,4 +9,3 @@ playwright-report/
 coverage/
 *.zip
 *.xpi
-package-lock.json

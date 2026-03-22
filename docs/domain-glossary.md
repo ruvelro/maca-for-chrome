@@ -1,0 +1,44 @@
+# Domain Glossary
+
+- `ALT`
+  - accessibility-oriented image description for WordPress media
+- `Title`
+  - short title text for the attachment
+- `Leyenda`
+  - caption text with more editorial tone
+- `SEO profile`
+  - prompt preset that changes generation style:
+    - blog
+    - product
+    - person
+    - graphic
+    - logo
+- `Section style profile`
+  - editorial context layer:
+    - general
+    - review
+    - news
+    - comparison
+- `Session context`
+  - short tab-scoped editorial hint persisted in background memory
+- `Signature`
+  - caption suffix that can be appended manually or automatically
+- `Generate mode`
+  - what fields to generate:
+    - `both`
+    - `alt`
+    - `caption`
+- `Batch QA`
+  - gating logic that decides whether batch results are auto-applied
+- `Auto-upload`
+  - automatic processing of newly uploaded WordPress media items
+- `Safety fuse`
+  - queue guard that stops mass auto-processing above a threshold
+- `Decorative`
+  - model flag allowing empty ALT when configured
+- `History`
+  - locally stored record of generated outputs shown in popup
+- `Debug log`
+  - recent local diagnostic events without API keys
+- `Metrics`
+  - local counters and timings grouped by provider/model/mode/source

@@ -1,0 +1,17 @@
+{
+  "name": "maca",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-extensions.mjs all",
+    "check:generated": "node scripts/check-generated.mjs",
+    "build:chrome": "node scripts/build-extensions.mjs chrome && powershell -ExecutionPolicy Bypass -File scripts/build-chrome.ps1",
+    "build:firefox": "node scripts/build-extensions.mjs firefox && powershell -ExecutionPolicy Bypass -File scripts/build-firefox.ps1",
+    "test:node": "node --test tests/*.test.mjs",
+    "test:browser": "npx --yes playwright test -c playwright.config.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.53.0"
+  }
+}

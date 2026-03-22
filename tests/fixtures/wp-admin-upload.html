@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>WP Media Fixture</title>
+  <style>
+    body { font-family: sans-serif; }
+    .attachments-browser { display: flex; flex-direction: column; gap: 12px; }
+    ul.attachments { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(3, 120px); gap: 12px; }
+    li.attachment { border: 1px solid #bbb; padding: 8px; cursor: pointer; }
+    li.attachment.selected { border-color: #0073aa; background: #eef6fb; }
+    .attachment-details { margin-top: 24px; display: grid; gap: 12px; max-width: 500px; }
+    .setting { display: grid; gap: 4px; }
+    .name { font-weight: 700; }
+    .thumbnail img { width: 100%; display: block; }
+  </style>
+</head>
+<body>
+  <div class="media-frame">
+    <div class="attachments-browser">
+      <ul class="attachments" id="attachments-list">
+        <li class="attachment selected" aria-checked="true" data-id="101" tabindex="0" data-title="foto-a" data-filename="foto-a.jpg">
+          <div class="thumbnail"><img src="data:image/gif;base64,R0lGODlhAQABAAAAACwAAAAAAQABAAA=" alt="A" /></div>
+        </li>
+        <li class="attachment selected" aria-checked="true" data-id="102" data-title="foto-b" data-filename="foto-b.jpg">
+          <div class="thumbnail"><img src="data:image/gif;base64,R0lGODlhAQABAAAAACwAAAAAAQABAAA=" alt="B" /></div>
+        </li>
+      </ul>
+      <div class="attachment-details">
+        <div class="setting" data-setting="alt"><div class="name">Texto alternativo</div><textarea id="attachment_alt"></textarea></div>
+        <div class="setting" data-setting="title"><div class="name">Titulo</div><input id="attachment_title" /></div>
+        <div class="setting" data-setting="caption"><div class="name">Leyenda</div><div id="attachment_caption_editable" contenteditable="true" aria-label="Leyenda"></div></div>
+      </div>
+    </div>
+  </div>
+  <script>
+    window.__fixtureState = { selectedId: '101' };
+    const attachments = Array.from(document.querySelectorAll('li.attachment[data-id]'));
+    function updateSelection(id) {
+      window.__fixtureState.selectedId = id;
+      attachments.forEach((el) => {
+        const on = el.getAttribute('data-id') === id;
+        el.classList.toggle('selected', on);
+        el.setAttribute('aria-checked', on ? 'true' : 'false');
+        el.setAttribute('tabindex', on ? '0' : '-1');
+      });
+    }
+    attachments.forEach((el) => {
+      el.addEventListener('click', () => updateSelection(el.getAttribute('data-id')));
+    });
+  </script>
+</body>
+</html>
