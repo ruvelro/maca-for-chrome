@@ -6,3 +6,7 @@ web-ext-artifacts/
 .amo-upload-uuid
 test-results/
 playwright-report/
+coverage/
+*.zip
+*.xpi
+package-lock.json

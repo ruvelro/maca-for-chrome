@@ -46,6 +46,7 @@ export async function runOverlayAnalysisJob({
     type: "MACA_OVERLAY_OPEN",
     jobId,
     imgUrl,
+    filenameContext: String(filenameContext || ""),
     pageUrl,
     sessionContext: getSessionContextForTab(tabId),
     generateMode: String(modeOverride || cfg.generateMode || "both"),
@@ -95,12 +96,10 @@ export async function runOverlayAnalysisJob({
   }
 }
 
-export async function resumePersistedManualJobs({ getPersistedManualJob, clearTabRuntimeState, scheduleRuntimeStatePersist, runOverlayAnalysisJob }) {
+export async function resumePersistedManualJobs({ getPersistedManualJobEntries, clearTabRuntimeState, scheduleRuntimeStatePersist, runOverlayAnalysisJob }) {
   const tabs = await chrome.tabs.query({});
   const liveTabIds = new Set(tabs.map((tab) => tab.id).filter((id) => id != null));
-  for (const tab of tabs) {
-    const tabId = tab.id;
-    const job = getPersistedManualJob(tabId);
+  for (const [tabId, job] of getPersistedManualJobEntries()) {
     if (!job) continue;
     if (!liveTabIds.has(tabId)) {
       clearTabRuntimeState(tabId);

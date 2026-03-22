@@ -49,7 +49,7 @@ import {
   getPersistedBatchJob,
   rememberManualJob,
   forgetManualJob,
-  getPersistedManualJob,
+  getPersistedManualJobEntries,
   clearTabRuntimeState,
   serializeRuntimeState,
   hydrateRuntimeState,
@@ -1137,7 +1137,7 @@ runtimeStateReady.then(async () => {
   await resumePersistedAutoUploadJobs();
   await resumePersistedBatchJobs();
   await resumePersistedManualJobs({
-    getPersistedManualJob,
+    getPersistedManualJobEntries,
     clearTabRuntimeState,
     scheduleRuntimeStatePersist,
     runOverlayAnalysisJob: (job) => runOverlayAnalysisJob({

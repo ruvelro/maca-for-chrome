@@ -185,6 +185,10 @@ export function getPersistedManualJob(tabId) {
   return job ? { ...job } : null;
 }
 
+export function getPersistedManualJobEntries() {
+  return Array.from(__manualJobsByTab.entries()).map(([tabId, job]) => [tabId, { ...job }]);
+}
+
 export function rememberBatchJob(tabId, job) {
   if (tabId == null || !job || !Array.isArray(job.items)) return;
   __batchJobsByTab.set(tabId, {

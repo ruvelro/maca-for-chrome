@@ -55,6 +55,7 @@
     alt: "",
     title: "",
     leyenda: "",
+    filenameContext: "",
     seoReview: null,
     sessionContext: "",
     wpAutoApply: false,
@@ -75,7 +76,9 @@
     autoUploadPaused: false,
     sessionContextTimer: null,
     loadingWatchdogTimer: null,
-    lastApplyStatus: null
+    lastApplyStatus: null,
+    pendingCompleteAction: "",
+    autoApplyDone: false
   };
 
   function injectStyles() {
@@ -493,6 +496,28 @@
     }
   }
 
+  function runOnCompleteActionNow(action) {
+    try {
+      if (action === "minimize") {
+        if (UI.overlay) {
+          removeOverlay();
+          showMini();
+        } else {
+          showMini();
+        }
+      } else if (action === "close") {
+        closeAll();
+      }
+    } catch (_) {}
+  }
+
+  function flushPendingCompleteAction() {
+    const action = String(STATE.pendingCompleteAction || "none");
+    if (!action || action === "none") return;
+    STATE.pendingCompleteAction = "";
+    runOnCompleteActionNow(action);
+  }
+
   function armLoadingWatchdog() {
     clearLoadingWatchdog();
     STATE.loadingWatchdogTimer = setTimeout(() => {
@@ -506,7 +531,12 @@
 
   function scheduleAutoApply() {
     clearAutoApplyTimer();
-    if (!STATE.wpAutoApply) return;
+    STATE.autoApplyDone = false;
+    if (!STATE.wpAutoApply) {
+      STATE.autoApplyDone = true;
+      flushPendingCompleteAction();
+      return;
+    }
 
     const mode = String(STATE.generateMode || "both");
     const wantAlt = mode !== "caption";
@@ -536,12 +566,19 @@
         const okAlt = !wantAlt || !!res?.alt;
         const okTitle = !wantTitle || !!res?.title;
         const okCap = !wantCap || !!res?.leyenda;
-        if ((okAlt && okTitle && okCap) || STATE.autoApplyAttempts >= maxAttempts) return;
+        if ((okAlt && okTitle && okCap) || STATE.autoApplyAttempts >= maxAttempts) {
+          STATE.autoApplyDone = true;
+          flushPendingCompleteAction();
+          return;
+        }
 
         STATE.autoApplyTimer = setTimeout(attempt, delayMs);
       } catch (_) {
         if (STATE.autoApplyAttempts < maxAttempts) {
           STATE.autoApplyTimer = setTimeout(attempt, delayMs);
+        } else {
+          STATE.autoApplyDone = true;
+          flushPendingCompleteAction();
         }
       }
     };
@@ -571,6 +608,8 @@
     STATE.autoUploadCancelling = false;
     STATE.autoUploadPaused = false;
     STATE.lastApplyStatus = null;
+    STATE.pendingCompleteAction = "";
+    STATE.autoApplyDone = false;
     clearSessionContextTimer();
     removeOverlay();
     removeMini();
@@ -867,7 +906,9 @@ Leyenda: ${c}`);
     try {
       const res = await chrome.runtime.sendMessage({
         type: "MACA_REGENERATE",
+        jobId: STATE.jobId,
         imageUrl: STATE.imgUrl,
+        filenameContext: STATE.filenameContext,
         pageUrl: STATE.pageUrl,
         styleOverride: String(styleOverride || "")
       });
@@ -1375,31 +1416,22 @@ Leyenda: ${c}`);
     // We run it after a short delay so (if enabled) WP auto-apply has time to fire.
     const action = String(STATE.onCompleteAction || "none");
     if (action !== "none") {
-      const delay = STATE.wpAutoApply ? 280 : 80;
+      STATE.pendingCompleteAction = action;
+      const delay = STATE.wpAutoApply ? 80 : 80;
       setTimeout(() => {
-        try {
-          if (action === "minimize") {
-            // Minimize to the mini bar.
-            if (UI.overlay) {
-              removeOverlay();
-              showMini();
-            } else {
-              showMini();
-            }
-          } else if (action === "close") {
-            closeAll();
-          }
-        } catch (_) {}
+        if (STATE.wpAutoApply && !STATE.autoApplyDone) return;
+        flushPendingCompleteAction();
       }, delay);
     }
   }
 
-  function handleOpen({ jobId, imgUrl, pageUrl, sessionContext, generateMode, wpAutoApply, wpAutoApplyRequireMedia, onCompleteAction }) {
+  function handleOpen({ jobId, imgUrl, filenameContext, pageUrl, sessionContext, generateMode, wpAutoApply, wpAutoApplyRequireMedia, onCompleteAction }) {
     clearApplyTimer();
 	    clearAutoApplyTimer();
     clearLoadingWatchdog();
     STATE.jobId = jobId;
     STATE.imgUrl = imgUrl || "";
+    STATE.filenameContext = filenameContext || "";
     STATE.pageUrl = pageUrl || "";
 	    STATE.generateMode = String(generateMode || "both");
     STATE.wpAutoApply = !!wpAutoApply;
@@ -1411,6 +1443,8 @@ Leyenda: ${c}`);
     STATE.seoReview = null;
     STATE.sessionContext = String(sessionContext || "");
     STATE.lastApplyStatus = null;
+    STATE.pendingCompleteAction = "";
+    STATE.autoApplyDone = false;
     STATE.status = "loading";
     STATE.error = "";
     STATE.loadingSince = Date.now();

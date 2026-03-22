@@ -770,6 +770,28 @@
     return null;
   }
 
+  function isStableAttachmentCandidate(candidate) {
+    const url = String(candidate?.imageUrl || "");
+    return !!url && !url.startsWith("blob:");
+  }
+
+  function resolveStableCandidateForAttachmentEl(el) {
+    const direct = extractCandidateFromAttachmentEl(el) || findCandidate(el);
+    if (isStableAttachmentCandidate(direct)) return direct;
+
+    const currentId = String(el?.getAttribute?.("data-id") || el?.dataset?.id || "");
+    const selectedEl = getWpSelectedAttachmentEl();
+    const selectedId = String(selectedEl?.getAttribute?.("data-id") || selectedEl?.dataset?.id || "");
+    if (!currentId || !selectedId || currentId !== selectedId) return null;
+
+    const detailsCand = findWpDetailsCandidate();
+    if (!isStableAttachmentCandidate(detailsCand)) return null;
+    return {
+      imageUrl: detailsCand.imageUrl,
+      filenameContext: firstTruthy(direct?.filenameContext, detailsCand.filenameContext)
+    };
+  }
+
   function isSelectedAttachmentEl(el) {
     if (!el) return false;
     return el.matches("li.attachment[aria-checked='true'], li.attachment[aria-selected='true'], li.attachment.selected");
@@ -825,16 +847,7 @@
       if (!(allowBatchUploadFlow || allowSelectFeature)) return;
       if ((Date.now() - meta.firstSeenAt) < AUTO_UPLOAD.minAgeMs) return;
 
-      let c = extractCandidateFromAttachmentEl(el) || findCandidate(el);
-      if (c?.imageUrl && String(c.imageUrl).startsWith("blob:")) {
-        const selectedCand = findSelectedWpCandidate();
-        if (selectedCand?.imageUrl && !String(selectedCand.imageUrl).startsWith("blob:")) {
-          c = {
-            imageUrl: selectedCand.imageUrl,
-            filenameContext: firstTruthy(c.filenameContext, selectedCand.filenameContext)
-          };
-        }
-      }
+      const c = resolveStableCandidateForAttachmentEl(el);
       if (!c?.imageUrl) return;
 
       meta.triggered = true;
@@ -1014,16 +1027,9 @@
     for (const el of els) {
       const id = String(el.getAttribute("data-id") || el.dataset?.id || "");
       const thumb = el.querySelector(".thumbnail") || el.querySelector("img") || el;
-      let cand = extractCandidateFromAttachmentEl(el) || findCandidate(thumb) || findCandidate(el);
-      if (cand?.imageUrl && String(cand.imageUrl).startsWith("blob:")) {
-        const selectedCand = findSelectedWpCandidate();
-        if (selectedCand?.imageUrl && !String(selectedCand.imageUrl).startsWith("blob:")) {
-          cand = {
-            imageUrl: selectedCand.imageUrl,
-            filenameContext: firstTruthy(cand.filenameContext, selectedCand.filenameContext)
-          };
-        }
-      }
+      let cand = resolveStableCandidateForAttachmentEl(el);
+      if (!cand) cand = findCandidate(thumb) || findCandidate(el);
+      if (cand?.imageUrl && String(cand.imageUrl).startsWith("blob:")) cand = null;
       if (!cand || !cand.imageUrl) continue;
       const dedupeKey = id || cand.imageUrl;
       if (seen.has(dedupeKey)) continue;
