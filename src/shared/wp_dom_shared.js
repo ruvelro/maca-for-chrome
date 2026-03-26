@@ -78,13 +78,23 @@
     try {
       el.focus?.();
       if (el.getAttribute?.("contenteditable") === "true") {
+        el.innerHTML = "";
         el.textContent = value;
+        const range = document.createRange();
+        const sel = window.getSelection();
+        range.selectNodeContents(el);
+        range.collapse(false);
+        sel.removeAllRanges();
+        sel.addRange(range);
       } else {
         el.value = value;
       }
       el.dispatchEvent(new Event("input", { bubbles: true }));
       el.dispatchEvent(new Event("change", { bubbles: true }));
       el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: " " }));
+      el.blur?.();
+      el.dispatchEvent(new Event("blur", { bubbles: true }));
+      el.dispatchEvent(new Event("focusout", { bubbles: true }));
       return true;
     } catch (_) {
       return false;
